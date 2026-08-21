@@ -1,0 +1,23 @@
+# Binaries
+kilovault
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Dependencies
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+go.sum
