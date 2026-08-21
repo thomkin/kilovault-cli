@@ -98,18 +98,20 @@ Generate tokens locally on your machine (not on server):
 
 ```bash
 # Generate token with JWT_SECRET
-kilovault token local <userId> -j <jwt_secret> [-e <seconds>] [-p <json-perms>]
+kilovault token local -j <jwt_secret> <userId> [-e <seconds>] [-p <json-perms>]
 
-# Generate and save token
-kilovault token local user123 -j $JWT_SECRET -e 3600 --save
+# Generate and save token to config
+kilovault token local -S -j $JWT_SECRET user123 -e 3600
 
 # With permissions
-kilovault token local user123 -j $JWT_SECRET -p '{"vault.get":true,"vault.set":true}'
+kilovault token local -j $JWT_SECRET -p '{"vault.get":true,"vault.set":true}' user123
 
 # Via environment variable
 export JWT_SECRET="your-jwt-secret"
-kilovault token local user123 -e 3600 --save
+kilovault token local -S user123 -e 3600
 ```
+
+**Note:** Flags must come BEFORE positional arguments (userId)
 
 ### Vault Operations
 
