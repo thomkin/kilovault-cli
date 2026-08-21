@@ -19,6 +19,25 @@ make install
 # Installs to $GOPATH/bin
 ```
 
+## Security Model
+
+**Token Generation**
+- Tokens are generated **locally on your machine**, not on the server
+- Only your machine needs `AUTH_SECRET` (to verify you're authorized)
+- Server only needs `JWT_SECRET` (to verify token signatures)
+- If server is compromised, attacker cannot generate new tokens
+
+**Workflow**
+```bash
+# 1. Generate token locally (one-time)
+kilovault token local -j $JWT_SECRET user123 -e 3600 --save
+
+# 2. Use saved token for all operations
+kilovault get mykey           # Uses saved token
+kilovault set mykey value     # Uses saved token
+kilovault admin list -t $ADMIN_TOKEN
+```
+
 ## Configuration
 
 ### Endpoint/URL
@@ -46,14 +65,14 @@ kilovault config set endpoint http://your-server:5096
 
 ### Authentication Token
 
-Resolved in this priority order:
+Token generated locally with `token local` command, then resolved in this priority order:
 1. **Flag**: `-t` / `--token` flag
 2. **Environment**: `KILOVAULT_USER_TOKEN` env var
 3. **File**: `~/.config/kilovault/user_token.jwt`
 
-Save token from auth:
+Save generated token:
 ```bash
-kilovault auth user123 -s mysecret --save
+kilovault token local user123 -j $JWT_SECRET --save
 ```
 
 Set in config file:
@@ -73,19 +92,38 @@ kilovault config get endpoint
 kilovault config clear endpoint
 ```
 
+### Token Generation
+
+Generate tokens locally on your machine (not on server):
+
+```bash
+# Generate token with JWT_SECRET
+kilovault token local <userId> -j <jwt_secret> [-e <seconds>] [-p <json-perms>]
+
+# Generate and save token
+kilovault token local user123 -j $JWT_SECRET -e 3600 --save
+
+# With permissions
+kilovault token local user123 -j $JWT_SECRET -p '{"vault.get":true,"vault.set":true}'
+
+# Via environment variable
+export JWT_SECRET="your-jwt-secret"
+kilovault token local user123 -e 3600 --save
+```
+
 ### Vault Operations
 
 ```bash
-# Get secret (uses saved token or env token)
+# Get secret (uses saved token)
 kilovault get mykey
 
-# Set secret (uses saved token or env token)
+# Set secret (uses saved token)
 kilovault set mykey mysecret
 
-# Get with specific token
+# With specific token
 kilovault get mykey -t <token>
 
-# Set with env token
+# With environment token
 export KILOVAULT_USER_TOKEN=mytoken
 kilovault get mykey
 ```
@@ -94,21 +132,6 @@ kilovault get mykey
 
 ```bash
 kilovault status
-```
-
-### Authentication
-
-```bash
-kilovault auth <userId> -s <secret> [-p <json-perms>] [-e <seconds>] [-S]
-
-# Get token (prints to stdout)
-kilovault auth user123 -s mysecret -e 3600
-
-# Get token and save to ~/.config/kilovault/user_token.jwt
-kilovault auth user123 -s mysecret -e 3600 --save
-
-# With permissions
-kilovault auth user123 -s mysecret -p '{"vault.get":true}'
 ```
 
 ### Admin Commands
