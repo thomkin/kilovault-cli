@@ -19,7 +19,9 @@ make install
 # Installs to $GOPATH/bin
 ```
 
-## Usage
+## Configuration
+
+### URL
 
 Set `KILOVAULT_URL` environment variable (default: `http://localhost:5096`):
 
@@ -27,17 +29,33 @@ Set `KILOVAULT_URL` environment variable (default: `http://localhost:5096`):
 export KILOVAULT_URL=http://your-server:5096
 ```
 
+### Authentication Token
+
+Token is resolved in this priority order:
+1. **Flag**: `-t` / `--token` flag
+2. **Environment**: `KILOVAULT_USER_TOKEN` env var
+3. **File**: `~/.config/kilovault/user_token.jwt`
+
+Create config directory (auto-created if needed):
+```bash
+mkdir -p ~/.config/kilovault
+```
+
 ### Vault Operations
 
 ```bash
-# Get secret
+# Get secret (uses saved token or env token)
 kilovault get mykey
 
-# Set secret
+# Set secret (uses saved token or env token)
 kilovault set mykey mysecret
 
 # Get with specific token
 kilovault get mykey -t <token>
+
+# Set with env token
+export KILOVAULT_USER_TOKEN=mytoken
+kilovault get mykey
 ```
 
 ### System Status
@@ -49,10 +67,16 @@ kilovault status
 ### Authentication
 
 ```bash
-kilovault auth <userId> -s <secret> [-p <json-perms>] [-e <seconds>]
+kilovault auth <userId> -s <secret> [-p <json-perms>] [-e <seconds>] [-S]
 
-# Example
+# Get token (prints to stdout)
 kilovault auth user123 -s mysecret -e 3600
+
+# Get token and save to ~/.config/kilovault/user_token.jwt
+kilovault auth user123 -s mysecret -e 3600 --save
+
+# With permissions
+kilovault auth user123 -s mysecret -p '{"vault.get":true}'
 ```
 
 ### Admin Commands

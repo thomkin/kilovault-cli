@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 type RpcRequest struct {
@@ -27,6 +29,53 @@ type Client struct {
 	client  *http.Client
 }
 
+func resolveToken(flagToken string) string {
+	if flagToken != "" {
+		return flagToken
+	}
+
+	if envToken := os.Getenv("KILOVAULT_USER_TOKEN"); envToken != "" {
+		return envToken
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	tokenPath := filepath.Join(home, ".config", "kilovault", "user_token.jwt")
+	data, err := os.ReadFile(tokenPath)
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(data))
+}
+
+func ensureConfigDir() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	configDir := filepath.Join(home, ".config", "kilovault")
+	return os.MkdirAll(configDir, 0700)
+}
+
+func SaveToken(token string) error {
+	if err := ensureConfigDir(); err != nil {
+		return err
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	tokenPath := filepath.Join(home, ".config", "kilovault", "user_token.jwt")
+	return os.WriteFile(tokenPath, []byte(token), 0600)
+}
+
 func New(baseURL string) *Client {
 	if baseURL == "" {
 		baseURL = os.Getenv("KILOVAULT_URL")
@@ -38,6 +87,12 @@ func New(baseURL string) *Client {
 		baseURL: baseURL,
 		client:  &http.Client{},
 	}
+}
+
+func NewWithToken(baseURL, token string) *Client {
+	c := New(baseURL)
+	c.token = resolveToken(token)
+	return c
 }
 
 func (c *Client) SetToken(token string) {
