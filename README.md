@@ -21,24 +21,56 @@ make install
 
 ## Configuration
 
-### URL
+### Endpoint/URL
 
-Set `KILOVAULT_URL` environment variable (default: `http://localhost:5096`):
+Resolved in this priority order:
+1. **Flag**: `-e` / `--endpoint` global flag
+2. **Environment**: `KILOVAULT_URL` env var
+3. **Config file**: `~/.config/kilovault/config.json` (endpoint field)
+4. **Default**: `http://localhost:5096`
 
+Set via flag:
+```bash
+kilovault -e http://your-server:5096 get mykey
+```
+
+Set via environment:
 ```bash
 export KILOVAULT_URL=http://your-server:5096
 ```
 
+Set in config file:
+```bash
+kilovault config set endpoint http://your-server:5096
+```
+
 ### Authentication Token
 
-Token is resolved in this priority order:
+Resolved in this priority order:
 1. **Flag**: `-t` / `--token` flag
 2. **Environment**: `KILOVAULT_USER_TOKEN` env var
 3. **File**: `~/.config/kilovault/user_token.jwt`
 
-Create config directory (auto-created if needed):
+Save token from auth:
 ```bash
-mkdir -p ~/.config/kilovault
+kilovault auth user123 -s mysecret --save
+```
+
+Set in config file:
+```bash
+kilovault config set token <token-value>
+```
+
+### Config Directory
+
+Auto-created at `~/.config/kilovault/` (mode 0700) on first use.
+
+Manage config:
+```bash
+kilovault config show        # Show all config
+kilovault config set endpoint http://localhost:5096
+kilovault config get endpoint
+kilovault config clear endpoint
 ```
 
 ### Vault Operations

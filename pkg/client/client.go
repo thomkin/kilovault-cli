@@ -62,6 +62,69 @@ func ensureConfigDir() error {
 	return os.MkdirAll(configDir, 0700)
 }
 
+type Config struct {
+	Endpoint string `json:"endpoint,omitempty"`
+	Token    string `json:"token,omitempty"`
+}
+
+func LoadConfigFile() (*Config, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+
+	configPath := filepath.Join(home, ".config", "kilovault", "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &Config{}, nil
+		}
+		return nil, err
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func SaveConfig(cfg *Config) error {
+	if err := ensureConfigDir(); err != nil {
+		return err
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	configPath := filepath.Join(home, ".config", "kilovault", "config.json")
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(configPath, data, 0600)
+}
+
+func resolveEndpoint(flagEndpoint string) string {
+	if flagEndpoint != "" {
+		return flagEndpoint
+	}
+
+	if envEndpoint := os.Getenv("KILOVAULT_URL"); envEndpoint != "" {
+		return envEndpoint
+	}
+
+	cfg, err := LoadConfigFile()
+	if err == nil && cfg.Endpoint != "" {
+		return cfg.Endpoint
+	}
+
+	return "http://localhost:5096"
+}
+
 func SaveToken(token string) error {
 	if err := ensureConfigDir(); err != nil {
 		return err
@@ -77,14 +140,8 @@ func SaveToken(token string) error {
 }
 
 func New(baseURL string) *Client {
-	if baseURL == "" {
-		baseURL = os.Getenv("KILOVAULT_URL")
-		if baseURL == "" {
-			baseURL = "http://localhost:5096"
-		}
-	}
 	return &Client{
-		baseURL: baseURL,
+		baseURL: resolveEndpoint(baseURL),
 		client:  &http.Client{},
 	}
 }
