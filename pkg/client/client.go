@@ -63,8 +63,9 @@ func ensureConfigDir() error {
 }
 
 type Config struct {
-	Endpoint string `json:"endpoint,omitempty"`
-	Token    string `json:"token,omitempty"`
+	Endpoint  string `json:"endpoint,omitempty"`
+	Token     string `json:"token,omitempty"`
+	JWTSecret string `json:"jwt_secret,omitempty"`
 }
 
 func LoadConfigFile() (*Config, error) {
