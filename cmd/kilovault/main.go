@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/thomkin/kilovault-cli/pkg/client"
 	"github.com/urfave/cli/v2"
@@ -664,13 +665,13 @@ func main() {
 								return nil
 							}
 
-							headers := []string{"ID", "Timestamp", "UserID", "Key", "Action"}
-							fmt.Println(strings.Join(headers, "\t"))
+							w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+							fmt.Fprintln(w, strings.Join([]string{"ID", "Timestamp", "UserID", "Key", "Action"}, "\t"))
 							for _, entry := range result.History {
-								fmt.Printf("%s\t%s\t%s\t%s\t%s\n",
+								fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 									entry.ID, entry.Timestamp, entry.UserID, entry.Key, entry.Action)
 							}
-							return nil
+							return w.Flush()
 						},
 					},
 					{

@@ -476,6 +476,54 @@ func TestAdminGet_MissingUserFlagErrors(t *testing.T) {
 	}
 }
 
+func TestAdminHistory_ShowsActionAndTimestamp(t *testing.T) {
+	// Server wire format uses "type"/"createdAt" (its DB column names),
+	// not "action"/"timestamp" -- this is the real shape sent by
+	// history.get, and the bug this test guards against is the CLI
+	// silently zero-valuing Action/Timestamp on a JSON tag mismatch.
+	server := newFakeHistoryServer([]map[string]string{
+		{"id": "abc-123", "key": "mykey", "type": "get", "createdAt": "2026-01-01T00:00:00Z", "userId": "alice"},
+	})
+	defer server.Close()
+
+	stdout, stderr, err := runCLIArgs(t, "-e", server.URL, "admin", "history", "-t", "admintok")
+	if err != nil {
+		t.Fatalf("admin history failed: %v\n%s", err, stderr)
+	}
+
+	if !strings.Contains(stdout, "get") {
+		t.Errorf("stdout = %q, want it to contain the action %q", stdout, "get")
+	}
+	if !strings.Contains(stdout, "2026-01-01T00:00:00Z") {
+		t.Errorf("stdout = %q, want it to contain the timestamp", stdout)
+	}
+}
+
+// newFakeHistoryServer fakes history.get, returning the given rows verbatim
+// as the "history" result (rows use the server's real wire field names:
+// id/key/type/createdAt/userId).
+func newFakeHistoryServer(rows []map[string]string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		switch req.Method {
+		case "history.get":
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": nil, "result": map[string]interface{}{"history": rows}})
+		default:
+			http.Error(w, "unknown method: "+req.Method, http.StatusBadRequest)
+		}
+	}))
+}
+
 // newFakeAdminServer is like newFakeVaultServer but for vault.admin.get/set,
 // keyed by "userId/key".
 func newFakeAdminServer(store map[string]string) *httptest.Server {

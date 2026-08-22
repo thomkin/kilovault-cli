@@ -405,10 +405,10 @@ type HistoryGetParams struct {
 
 type HistoryEntry struct {
 	ID        string `json:"id"`
-	Timestamp string `json:"timestamp"`
+	Timestamp string `json:"createdAt"`
 	UserID    string `json:"userId"`
 	Key       string `json:"key"`
-	Action    string `json:"action"`
+	Action    string `json:"type"`
 }
 
 type HistoryGetResult struct {
