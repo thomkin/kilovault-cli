@@ -18,7 +18,7 @@ type RpcRequest struct {
 }
 
 type RpcResponse struct {
-	Error   *string     `json:"error"`
+	Error   interface{} `json:"error"`
 	Message string      `json:"message"`
 	Result  interface{} `json:"result"`
 }
@@ -214,7 +214,7 @@ func (c *Client) VaultGet(key string) (*VaultGetResult, error) {
 	}
 
 	if resp.Error != nil {
-		return nil, fmt.Errorf("%s - %s", *resp.Error, resp.Message)
+		return nil, fmt.Errorf("error - %s", resp.Message)
 	}
 
 	data, _ := json.Marshal(resp.Result)
@@ -236,7 +236,7 @@ func (c *Client) VaultSet(key, value string) error {
 	}
 
 	if resp.Error != nil {
-		return fmt.Errorf("%s - %s", *resp.Error, resp.Message)
+		return fmt.Errorf("error - %s", resp.Message)
 	}
 
 	return nil
@@ -254,7 +254,7 @@ func (c *Client) SystemAlive() (*SystemAliveResult, error) {
 	}
 
 	if resp.Error != nil {
-		return nil, fmt.Errorf("%s - %s", *resp.Error, resp.Message)
+		return nil, fmt.Errorf("error - %s", resp.Message)
 	}
 
 	data, _ := json.Marshal(resp.Result)
@@ -287,7 +287,7 @@ func (c *Client) AuthGetToken(secret, userID string, permissions interface{}, ex
 	}
 
 	if resp.Error != nil {
-		return nil, fmt.Errorf("%s - %s", *resp.Error, resp.Message)
+		return nil, fmt.Errorf("error - %s", resp.Message)
 	}
 
 	data, _ := json.Marshal(resp.Result)
@@ -317,7 +317,7 @@ func (c *Client) VaultAdminList(userID *string) (*VaultAdminListResult, error) {
 	}
 
 	if resp.Error != nil {
-		return nil, fmt.Errorf("%s - %s", *resp.Error, resp.Message)
+		return nil, fmt.Errorf("error - %s", resp.Message)
 	}
 
 	data, _ := json.Marshal(resp.Result)
@@ -343,7 +343,7 @@ func (c *Client) VaultAdminGet(userID, key string) (*VaultAdminGetResult, error)
 	}
 
 	if resp.Error != nil {
-		return nil, fmt.Errorf("%s - %s", *resp.Error, resp.Message)
+		return nil, fmt.Errorf("error - %s", resp.Message)
 	}
 
 	data, _ := json.Marshal(resp.Result)
@@ -366,7 +366,7 @@ func (c *Client) VaultAdminSet(userID, key, value string) error {
 	}
 
 	if resp.Error != nil {
-		return fmt.Errorf("%s - %s", *resp.Error, resp.Message)
+		return fmt.Errorf("error - %s", resp.Message)
 	}
 
 	return nil
@@ -389,7 +389,7 @@ func (c *Client) VaultAdminDelete(userID, key string) (*VaultAdminDeleteResult, 
 	}
 
 	if resp.Error != nil {
-		return nil, fmt.Errorf("%s - %s", *resp.Error, resp.Message)
+		return nil, fmt.Errorf("error - %s", resp.Message)
 	}
 
 	data, _ := json.Marshal(resp.Result)
@@ -422,7 +422,7 @@ func (c *Client) HistoryGet(userID *string) (*HistoryGetResult, error) {
 	}
 
 	if resp.Error != nil {
-		return nil, fmt.Errorf("%s - %s", *resp.Error, resp.Message)
+		return nil, fmt.Errorf("error - %s", resp.Message)
 	}
 
 	data, _ := json.Marshal(resp.Result)
@@ -443,7 +443,7 @@ func (c *Client) HistoryCleanup() (*HistoryCleanupResult, error) {
 	}
 
 	if resp.Error != nil {
-		return nil, fmt.Errorf("%s - %s", *resp.Error, resp.Message)
+		return nil, fmt.Errorf("error - %s", resp.Message)
 	}
 
 	data, _ := json.Marshal(resp.Result)
