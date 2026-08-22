@@ -45,6 +45,25 @@ func resolveToken(flagToken string) string {
 	return ""
 }
 
+// ResolveSecret resolves the E2E encryption secret in priority order:
+// flag > KILOVAULT_SECRET env var > config file.
+func ResolveSecret(flagSecret string) string {
+	if flagSecret != "" {
+		return flagSecret
+	}
+
+	if envSecret := os.Getenv("KILOVAULT_SECRET"); envSecret != "" {
+		return envSecret
+	}
+
+	cfg, err := LoadConfigFile()
+	if err == nil && cfg.Secret != "" {
+		return cfg.Secret
+	}
+
+	return ""
+}
+
 func ensureConfigDir() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -59,6 +78,7 @@ type Config struct {
 	Endpoint  string `json:"endpoint,omitempty"`
 	Token     string `json:"token,omitempty"`
 	JWTSecret string `json:"jwt_secret,omitempty"`
+	Secret    string `json:"secret,omitempty"`
 }
 
 func LoadConfigFile() (*Config, error) {

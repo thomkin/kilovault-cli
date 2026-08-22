@@ -19,6 +19,36 @@ func getEndpoint(c *cli.Context) string {
 	return ""
 }
 
+// encryptIfSecret encrypts value client-side when secret is non-empty,
+// leaving it untouched otherwise. The secret never leaves this process.
+func encryptIfSecret(value, secret string) (string, error) {
+	if secret == "" {
+		return value, nil
+	}
+	encrypted, err := client.Encrypt(secret, value)
+	if err != nil {
+		return "", fmt.Errorf("Failed to encrypt value: %v", err)
+	}
+	return encrypted, nil
+}
+
+// decryptIfNeeded decrypts value when it carries the encrypted-value
+// marker, requiring secret to be non-empty and correct. Plaintext values
+// (no marker) are returned unchanged regardless of secret.
+func decryptIfNeeded(value, secret string) (string, error) {
+	if !client.IsEncrypted(value) {
+		return value, nil
+	}
+	if secret == "" {
+		return "", fmt.Errorf("value is encrypted; provide a secret via -s/--secret, KILOVAULT_SECRET, or config")
+	}
+	decrypted, err := client.Decrypt(secret, value)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt value: wrong secret or corrupted data")
+	}
+	return decrypted, nil
+}
+
 func main() {
 	app := &cli.App{
 		Name:    "kilovault-cli",
@@ -58,6 +88,8 @@ func main() {
 								cfg.Token = value
 							case "jwt_secret":
 								cfg.JWTSecret = value
+							case "secret":
+								cfg.Secret = value
 							default:
 								return fmt.Errorf("unknown config key: %s", key)
 							}
@@ -91,6 +123,8 @@ func main() {
 								fmt.Println(cfg.Token)
 							case "jwt_secret":
 								fmt.Println(cfg.JWTSecret)
+							case "secret":
+								fmt.Println(cfg.Secret)
 							default:
 								return fmt.Errorf("unknown config key: %s", key)
 							}
@@ -132,6 +166,8 @@ func main() {
 								cfg.Token = ""
 							case "jwt_secret":
 								cfg.JWTSecret = ""
+							case "secret":
+								cfg.Secret = ""
 							default:
 								return fmt.Errorf("unknown config key: %s", key)
 							}
@@ -151,16 +187,29 @@ func main() {
 				Usage: "Get secret value from vault",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
+						Name:    "key",
+						Aliases: []string{"k"},
+						Usage:   "Key to get (required)",
+					},
+					&cli.StringFlag{
 						Name:    "token",
 						Aliases: []string{"t"},
 						Usage:   "Auth token",
 					},
+					&cli.StringFlag{
+						Name:    "secret",
+						Aliases: []string{"s"},
+						Usage:   "Secret for client-side AES-256 decryption",
+					},
 				},
 				Action: func(c *cli.Context) error {
-					if c.NArg() < 1 {
-						return fmt.Errorf("key argument required")
+					key := c.String("key")
+					if key == "" {
+						return fmt.Errorf("key required: use -k/--key")
 					}
-					key := c.Args().Get(0)
+					if c.NArg() > 0 {
+						return fmt.Errorf("unexpected argument(s): %v (use -k/--key to specify the key)", c.Args().Slice())
+					}
 
 					cl := client.NewWithToken(getEndpoint(c), c.String("token"))
 
@@ -169,11 +218,17 @@ func main() {
 						return fmt.Errorf("Request failed: %v", err)
 					}
 
-					if result.Value != "" {
-						fmt.Println(result.Value)
-					} else {
+					if result.Value == "" {
 						fmt.Println("(not set)")
+						return nil
 					}
+
+					value, err := decryptIfNeeded(result.Value, client.ResolveSecret(c.String("secret")))
+					if err != nil {
+						return err
+					}
+
+					fmt.Println(value)
 					return nil
 				},
 			},
@@ -182,17 +237,43 @@ func main() {
 				Usage: "Set secret value in vault",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
+						Name:    "key",
+						Aliases: []string{"k"},
+						Usage:   "Key to set (required)",
+					},
+					&cli.StringFlag{
+						Name:    "value",
+						Aliases: []string{"v"},
+						Usage:   "Value to set (required)",
+					},
+					&cli.StringFlag{
 						Name:    "token",
 						Aliases: []string{"t"},
 						Usage:   "Auth token",
 					},
+					&cli.StringFlag{
+						Name:    "secret",
+						Aliases: []string{"s"},
+						Usage:   "Secret for client-side AES-256 encryption",
+					},
 				},
 				Action: func(c *cli.Context) error {
-					if c.NArg() < 2 {
-						return fmt.Errorf("key and value arguments required")
+					key := c.String("key")
+					if key == "" {
+						return fmt.Errorf("key required: use -k/--key")
 					}
-					key := c.Args().Get(0)
-					value := c.Args().Get(1)
+					value := c.String("value")
+					if value == "" {
+						return fmt.Errorf("value required: use -v/--value")
+					}
+					if c.NArg() > 0 {
+						return fmt.Errorf("unexpected argument(s): %v (use -k/--key and -v/--value to specify the key and value)", c.Args().Slice())
+					}
+
+					value, err := encryptIfSecret(value, client.ResolveSecret(c.String("secret")))
+					if err != nil {
+						return err
+					}
 
 					cl := client.NewWithToken(getEndpoint(c), c.String("token"))
 
@@ -330,11 +411,19 @@ func main() {
 								Aliases: []string{"t"},
 								Usage:   "Admin token",
 							},
+							&cli.StringFlag{
+								Name:    "user",
+								Aliases: []string{"u"},
+								Usage:   "List keys for this user only (optional)",
+							},
 						},
 						Action: func(c *cli.Context) error {
-							var userID *string
 							if c.NArg() > 0 {
-								id := c.Args().Get(0)
+								return fmt.Errorf("unexpected argument(s): %v (use -u/--user to specify a user)", c.Args().Slice())
+							}
+
+							var userID *string
+							if id := c.String("user"); id != "" {
 								userID = &id
 							}
 
@@ -374,17 +463,38 @@ func main() {
 						Usage: "Get key for any user",
 						Flags: []cli.Flag{
 							&cli.StringFlag{
+								Name:    "user",
+								Aliases: []string{"u"},
+								Usage:   "User ID (required)",
+							},
+							&cli.StringFlag{
+								Name:    "key",
+								Aliases: []string{"k"},
+								Usage:   "Key to get (required)",
+							},
+							&cli.StringFlag{
 								Name:    "token",
 								Aliases: []string{"t"},
 								Usage:   "Admin token",
 							},
+							&cli.StringFlag{
+								Name:    "secret",
+								Aliases: []string{"s"},
+								Usage:   "Secret for client-side AES-256 decryption",
+							},
 						},
 						Action: func(c *cli.Context) error {
-							if c.NArg() < 2 {
-								return fmt.Errorf("userId and key arguments required")
+							userID := c.String("user")
+							if userID == "" {
+								return fmt.Errorf("user id required: use -u/--user")
 							}
-							userID := c.Args().Get(0)
-							key := c.Args().Get(1)
+							key := c.String("key")
+							if key == "" {
+								return fmt.Errorf("key required: use -k/--key")
+							}
+							if c.NArg() > 0 {
+								return fmt.Errorf("unexpected argument(s): %v (use -u/--user and -k/--key to specify the user and key)", c.Args().Slice())
+							}
 
 							cl := client.NewWithToken(getEndpoint(c), c.String("token"))
 
@@ -393,11 +503,17 @@ func main() {
 								return fmt.Errorf("Request failed: %v", err)
 							}
 
-							if result.Value != "" {
-								fmt.Println(result.Value)
-							} else {
+							if result.Value == "" {
 								fmt.Println("(not set)")
+								return nil
 							}
+
+							value, err := decryptIfNeeded(result.Value, client.ResolveSecret(c.String("secret")))
+							if err != nil {
+								return err
+							}
+
+							fmt.Println(value)
 							return nil
 						},
 					},
@@ -406,18 +522,52 @@ func main() {
 						Usage: "Set key for any user",
 						Flags: []cli.Flag{
 							&cli.StringFlag{
+								Name:    "user",
+								Aliases: []string{"u"},
+								Usage:   "User ID (required)",
+							},
+							&cli.StringFlag{
+								Name:    "key",
+								Aliases: []string{"k"},
+								Usage:   "Key to set (required)",
+							},
+							&cli.StringFlag{
+								Name:    "value",
+								Aliases: []string{"v"},
+								Usage:   "Value to set (required)",
+							},
+							&cli.StringFlag{
 								Name:    "token",
 								Aliases: []string{"t"},
 								Usage:   "Admin token",
 							},
+							&cli.StringFlag{
+								Name:    "secret",
+								Aliases: []string{"s"},
+								Usage:   "Secret for client-side AES-256 encryption",
+							},
 						},
 						Action: func(c *cli.Context) error {
-							if c.NArg() < 3 {
-								return fmt.Errorf("userId, key and value arguments required")
+							userID := c.String("user")
+							if userID == "" {
+								return fmt.Errorf("user id required: use -u/--user")
 							}
-							userID := c.Args().Get(0)
-							key := c.Args().Get(1)
-							value := c.Args().Get(2)
+							key := c.String("key")
+							if key == "" {
+								return fmt.Errorf("key required: use -k/--key")
+							}
+							value := c.String("value")
+							if value == "" {
+								return fmt.Errorf("value required: use -v/--value")
+							}
+							if c.NArg() > 0 {
+								return fmt.Errorf("unexpected argument(s): %v (use -u/--user, -k/--key and -v/--value to specify the user, key and value)", c.Args().Slice())
+							}
+
+							value, err := encryptIfSecret(value, client.ResolveSecret(c.String("secret")))
+							if err != nil {
+								return err
+							}
 
 							cl := client.NewWithToken(getEndpoint(c), c.String("token"))
 
@@ -434,17 +584,33 @@ func main() {
 						Usage: "Delete key for any user",
 						Flags: []cli.Flag{
 							&cli.StringFlag{
+								Name:    "user",
+								Aliases: []string{"u"},
+								Usage:   "User ID (required)",
+							},
+							&cli.StringFlag{
+								Name:    "key",
+								Aliases: []string{"k"},
+								Usage:   "Key to delete (required)",
+							},
+							&cli.StringFlag{
 								Name:    "token",
 								Aliases: []string{"t"},
 								Usage:   "Admin token",
 							},
 						},
 						Action: func(c *cli.Context) error {
-							if c.NArg() < 2 {
-								return fmt.Errorf("userId and key arguments required")
+							userID := c.String("user")
+							if userID == "" {
+								return fmt.Errorf("user id required: use -u/--user")
 							}
-							userID := c.Args().Get(0)
-							key := c.Args().Get(1)
+							key := c.String("key")
+							if key == "" {
+								return fmt.Errorf("key required: use -k/--key")
+							}
+							if c.NArg() > 0 {
+								return fmt.Errorf("unexpected argument(s): %v (use -u/--user and -k/--key to specify the user and key)", c.Args().Slice())
+							}
 
 							cl := client.NewWithToken(getEndpoint(c), c.String("token"))
 
@@ -470,11 +636,19 @@ func main() {
 								Aliases: []string{"t"},
 								Usage:   "Admin token",
 							},
+							&cli.StringFlag{
+								Name:    "user",
+								Aliases: []string{"u"},
+								Usage:   "Show history for this user only (optional)",
+							},
 						},
 						Action: func(c *cli.Context) error {
-							var userID *string
 							if c.NArg() > 0 {
-								id := c.Args().Get(0)
+								return fmt.Errorf("unexpected argument(s): %v (use -u/--user to specify a user)", c.Args().Slice())
+							}
+
+							var userID *string
+							if id := c.String("user"); id != "" {
 								userID = &id
 							}
 

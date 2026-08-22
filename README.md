@@ -115,20 +115,51 @@ kilovault token local -S -u user123 -e 3600
 
 ### Vault Operations
 
+All key/value arguments are flags, not positional arguments — this avoids a
+class of silent-drop bugs where a flag placed after a positional argument
+is never parsed (see "Encryption Secret" below for why this matters).
+
 ```bash
 # Get secret (uses saved token)
-kilovault get mykey
+kilovault get -k mykey
 
 # Set secret (uses saved token)
-kilovault set mykey mysecret
+kilovault set -k mykey -v mysecret
 
 # With specific token
-kilovault get mykey -t <token>
+kilovault get -k mykey -t <token>
 
 # With environment token
 export KILOVAULT_USER_TOKEN=mytoken
-kilovault get mykey
+kilovault get -k mykey
 ```
+
+### Encryption Secret
+
+Optional client-side AES-256-GCM encryption: when a secret is supplied,
+`set`/`admin set` encrypt the value locally before sending it, and
+`get`/`admin get` decrypt it locally after receiving it. **The secret never
+leaves your machine** — the server only ever sees ciphertext.
+
+Resolved in this priority order (same pattern as the auth token):
+1. **Flag**: `-s` / `--secret`
+2. **Environment**: `KILOVAULT_SECRET`
+3. **Config file**: `secret` field, via `kilovault config set secret <value>`
+
+```bash
+kilovault set -k mykey -v "sensitive value" -s "my-secret"
+kilovault get -k mykey -s "my-secret"
+
+export KILOVAULT_SECRET="my-secret"
+kilovault set -k mykey -v "sensitive value"
+kilovault get -k mykey
+```
+
+If no secret is supplied, `set`/`get` behave exactly as before (plaintext).
+A value previously stored without encryption is still readable without a
+secret. If a value is encrypted and no secret (or the wrong secret) is
+supplied to `get`, the command fails with an error rather than printing
+ciphertext or garbage.
 
 ### System Status
 
@@ -143,20 +174,20 @@ kilovault status
 kilovault admin list -t <admin-token>
 
 # List keys for specific user
-kilovault admin list <userId> -t <admin-token>
+kilovault admin list -u <userId> -t <admin-token>
 
-# Get key for any user
-kilovault admin get <userId> <key> -t <admin-token>
+# Get key for any user (add -s <secret> to decrypt an encrypted value)
+kilovault admin get -u <userId> -k <key> -t <admin-token>
 
-# Set key for any user
-kilovault admin set <userId> <key> <value> -t <admin-token>
+# Set key for any user (add -s <secret> to encrypt client-side)
+kilovault admin set -u <userId> -k <key> -v <value> -t <admin-token>
 
 # Delete key for any user
-kilovault admin delete <userId> <key> -t <admin-token>
+kilovault admin delete -u <userId> -k <key> -t <admin-token>
 
 # Get vault history
 kilovault admin history -t <admin-token>
-kilovault admin history <userId> -t <admin-token>
+kilovault admin history -u <userId> -t <admin-token>
 
 # Cleanup old history
 kilovault admin cleanup -t <admin-token>
