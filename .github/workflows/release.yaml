@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Build Linux binary
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: go build -o kilovault-linux-amd64 ./cmd/kilovault
+
+      - name: Upload to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          ENDPOINT="${{ secrets.R2_ENDPOINT }}"
+          BUCKET="${{ secrets.R2_BUCKET_NAME }}"
+          TAG="${GITHUB_REF_NAME}"
+
+          aws s3 cp kilovault-linux-amd64 \
+            "s3://${BUCKET}/kilovault-cli/${TAG}/kilovault-linux-amd64" \
+            --endpoint-url "$ENDPOINT"
+
+          aws s3 cp kilovault-linux-amd64 \
+            "s3://${BUCKET}/kilovault-cli/latest/kilovault-linux-amd64" \
+            --endpoint-url "$ENDPOINT"
