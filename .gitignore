@@ -18,6 +18,3 @@ vendor/
 # OS
 .DS_Store
 Thumbs.db
-
-# Go
-go.sum
