@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 type RpcRequest struct {
@@ -38,18 +37,12 @@ func resolveToken(flagToken string) string {
 		return envToken
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+	cfg, err := LoadConfigFile()
+	if err == nil && cfg.Token != "" {
+		return cfg.Token
 	}
 
-	tokenPath := filepath.Join(home, ".config", "kilovault", "user_token.jwt")
-	data, err := os.ReadFile(tokenPath)
-	if err != nil {
-		return ""
-	}
-
-	return strings.TrimSpace(string(data))
+	return ""
 }
 
 func ensureConfigDir() error {
@@ -126,19 +119,6 @@ func resolveEndpoint(flagEndpoint string) string {
 	return "http://localhost:5096"
 }
 
-func SaveToken(token string) error {
-	if err := ensureConfigDir(); err != nil {
-		return err
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	tokenPath := filepath.Join(home, ".config", "kilovault", "user_token.jwt")
-	return os.WriteFile(tokenPath, []byte(token), 0600)
-}
 
 func New(baseURL string) *Client {
 	return &Client{

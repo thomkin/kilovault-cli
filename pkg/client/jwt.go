@@ -17,7 +17,7 @@ type JWTHeader struct {
 
 type JWTPayload struct {
 	Sub         string                 `json:"sub"`
-	Permissions map[string]bool        `json:"permissions,omitempty"`
+	Permissions map[string]bool        `json:"permissions"`
 	Exp         int64                  `json:"exp,omitempty"`
 	Iat         int64                  `json:"iat"`
 }
@@ -25,6 +25,10 @@ type JWTPayload struct {
 func GenerateToken(userID string, permissions map[string]bool, expiresIn *int, jwtSecret string) (string, error) {
 	if jwtSecret == "" {
 		return "", fmt.Errorf("JWT_SECRET required for token generation")
+	}
+
+	if permissions == nil {
+		permissions = make(map[string]bool)
 	}
 
 	now := time.Now().Unix()

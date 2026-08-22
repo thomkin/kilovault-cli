@@ -30,7 +30,7 @@ make install
 **Workflow**
 ```bash
 # 1. Generate token locally (one-time)
-kilovault token local -j $JWT_SECRET user123 -e 3600 --save
+kilovault token local -j $JWT_SECRET -u user123 -e 3600 --save
 
 # 2. Use saved token for all operations
 kilovault get mykey           # Uses saved token
@@ -72,7 +72,7 @@ Token generated locally with `token local` command, then resolved in this priori
 
 Save generated token:
 ```bash
-kilovault token local user123 -j $JWT_SECRET --save
+kilovault token local -u user123 -j $JWT_SECRET --save
 ```
 
 Set in config file:
@@ -98,20 +98,20 @@ Generate tokens locally on your machine (not on server):
 
 ```bash
 # Generate token with JWT_SECRET
-kilovault token local -j <jwt_secret> <userId> [-e <seconds>] [-p <json-perms>]
+kilovault token local -j <jwt_secret> -u <userId> [-e <seconds>] [-p <json-perms>]
 
 # Generate and save token to config
-kilovault token local -S -j $JWT_SECRET user123 -e 3600
+kilovault token local -S -j $JWT_SECRET -u user123 -e 3600
 
 # With permissions
-kilovault token local -j $JWT_SECRET -p '{"vault.get":true,"vault.set":true}' user123
+kilovault token local -j $JWT_SECRET -p '{"vault.get":true,"vault.set":true}' -u user123
 
 # Via environment variable
 export JWT_SECRET="your-jwt-secret"
-kilovault token local -S user123 -e 3600
+kilovault token local -S -u user123 -e 3600
 ```
 
-**Note:** Flags must come BEFORE positional arguments (userId)
+**Note:** `-u`/`--user` is required; flags can be given in any order.
 
 ### Vault Operations
 
