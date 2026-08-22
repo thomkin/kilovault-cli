@@ -23,7 +23,7 @@ make install
 
 **Token Generation**
 - Tokens are generated **locally on your machine**, not on the server
-- Only your machine needs `AUTH_SECRET` (to verify you're authorized)
+- Only your machine needs `JWT_SECRET` (to verify you're authorized)
 - Server only needs `JWT_SECRET` (to verify token signatures)
 - If server is compromised, attacker cannot generate new tokens
 
@@ -33,8 +33,8 @@ make install
 kilovault token local -j $JWT_SECRET -u user123 -e 3600 --save
 
 # 2. Use saved token for all operations
-kilovault get mykey           # Uses saved token
-kilovault set mykey value     # Uses saved token
+kilovault get -k mykey                 # Uses saved token
+kilovault set -k mykey -v value        # Uses saved token
 kilovault admin list -t $ADMIN_TOKEN
 ```
 
@@ -68,7 +68,7 @@ kilovault config set endpoint http://your-server:5096
 Token generated locally with `token local` command, then resolved in this priority order:
 1. **Flag**: `-t` / `--token` flag
 2. **Environment**: `KILOVAULT_USER_TOKEN` env var
-3. **File**: `~/.config/kilovault/user_token.jwt`
+3. **Config file**: `~/.config/kilovault/config.json` (token field)
 
 Save generated token:
 ```bash
@@ -112,6 +112,60 @@ kilovault token local -S -u user123 -e 3600
 ```
 
 **Note:** `-u`/`--user` is required; flags can be given in any order.
+
+### Token Structure (for generating tokens without the CLI)
+
+Tokens are plain HMAC-SHA256 JWTs — no external library or the CLI itself
+is required to mint them. This is useful if another tool (e.g. Terraform,
+given access to the same `JWT_SECRET`) needs to generate many tokens
+programmatically, such as provisioning per-service credentials as part of
+cloud infra deployment.
+
+**Format:** `base64url(header) + "." + base64url(payload) + "." + base64url(signature)`
+
+- **header** — JSON, always exactly:
+  ```json
+  {"alg":"HS256","typ":"JWT"}
+  ```
+  (The server's verifier never actually reads `alg`/`typ` — it always
+  verifies as HMAC-SHA256 — but send this header for interoperability
+  with standard JWT tooling.)
+
+- **payload** — JSON with these claims:
+  | Claim | Type | Required | Meaning |
+  |---|---|---|---|
+  | `sub` | string | yes | User ID this token authenticates as |
+  | `permissions` | object of `string -> bool` | yes (can be `{}`) | See permissions table below |
+  | `iat` | number (unix seconds) | yes | Issued-at time |
+  | `exp` | number (unix seconds) | no | Expiry; omit for a non-expiring token |
+
+- **signature** — `HMAC_SHA256(secret, headerB64 + "." + payloadB64)`,
+  raw bytes then base64url-encoded.
+
+- **base64url encoding**: standard base64 with `+`→`-`, `/`→`_`, and
+  **no `=` padding**, for both parts and the signature.
+
+**Permission strings** are matched exactly (no hierarchy — `admin` does
+*not* imply `vault.get`/`vault.set`, and vice versa):
+
+| Permission | Grants |
+|---|---|
+| `vault.get` | `get` (read own vault value) |
+| `vault.set` | `set` (write own vault value) |
+| `admin` | all `admin *` subcommands and `admin history`/`admin cleanup` |
+
+A token needs `"permissions": {"admin": true}` to use any `admin`
+subcommand, and separately `"vault.get"`/`"vault.set"` for the
+non-admin `get`/`set` commands.
+
+**Signing secret** is the same `JWT_SECRET` used by `kilovault token
+local -j`. Keep it out of Terraform state/logs (mark outputs
+`sensitive`, avoid `local-exec` echoing it) — anyone with it can mint a
+token for any user with any permissions.
+
+Reference implementation: `pkg/client/jwt.go` (`GenerateToken`) is the
+canonical signer this CLI uses; match its behavior exactly to guarantee
+interop.
 
 ### Vault Operations
 
