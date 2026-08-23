@@ -146,6 +146,10 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# Without this, systemd tears down RuntimeDirectory the instant
+# ExecStart exits (oneshot has no "running" state to remain in), so
+# /run/kilovault would vanish before any consumer got to read it.
+RemainAfterExit=yes
 User=%s
 Group=%s
 ExecStart=%s fetch

@@ -14,6 +14,7 @@ func TestRenderUnitFile_ContainsExpectedDirectives(t *testing.T) {
 
 	wantSubstrings := []string{
 		"Type=oneshot",
+		"RemainAfterExit=yes",
 		"User=kilovault",
 		"Group=kilovault-consumers",
 		"ExecStart=/usr/local/bin/kilovault fetch",
