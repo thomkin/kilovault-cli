@@ -56,6 +56,10 @@ func main() {
 		Name:    "kilovault-cli",
 		Usage:   "CLI for kilovault secret management",
 		Version: "0.0.1",
+		// attr's --set/--remove values can contain commas (JSON arrays/
+		// objects); disable urfave/cli's default comma-splitting of
+		// StringSliceFlag values so a single occurrence is never split.
+		DisableSliceFlagSeparator: true,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "endpoint",
@@ -295,6 +299,110 @@ func main() {
 					}
 
 					fmt.Printf("✓ Set %s\n", key)
+					return nil
+				},
+			},
+			{
+				Name:  "attr",
+				Usage: "Add, replace, or remove attributes inside a JSON-object vault value",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "key",
+						Aliases: []string{"k"},
+						Usage:   "Vault key holding the JSON value (required)",
+					},
+					&cli.StringSliceFlag{
+						Name:  "set",
+						Usage: "Set path=value (repeatable), e.g. --set user.active=true",
+					},
+					&cli.StringSliceFlag{
+						Name:  "remove",
+						Usage: "Remove path (repeatable), e.g. --remove user.oldField",
+					},
+					&cli.StringFlag{
+						Name:    "token",
+						Aliases: []string{"t"},
+						Usage:   "Auth token",
+					},
+					&cli.StringFlag{
+						Name:    "secret",
+						Aliases: []string{"s"},
+						Usage:   "Secret for client-side AES-256 encryption/decryption",
+					},
+				},
+				Action: func(c *cli.Context) error {
+					key := c.String("key")
+					if key == "" {
+						return fmt.Errorf("key required: use -k/--key")
+					}
+					sets := c.StringSlice("set")
+					removes := c.StringSlice("remove")
+					if len(sets) == 0 && len(removes) == 0 {
+						return fmt.Errorf("at least one --set or --remove required")
+					}
+					if c.NArg() > 0 {
+						return fmt.Errorf("unexpected argument(s): %v (use --set/--remove to specify edits)", c.Args().Slice())
+					}
+
+					secret := client.ResolveSecret(c.String("secret"))
+					cl := client.NewWithToken(getEndpoint(c), c.String("token"))
+
+					result, err := cl.VaultGet(key)
+					if err != nil {
+						return fmt.Errorf("Request failed: %v", err)
+					}
+
+					var doc interface{}
+					if result.Value == "" {
+						doc = map[string]interface{}{}
+					} else {
+						plain, err := decryptIfNeeded(result.Value, secret)
+						if err != nil {
+							return err
+						}
+						if err := json.Unmarshal([]byte(plain), &doc); err != nil {
+							return fmt.Errorf("value at %q is not valid JSON: %v", key, err)
+						}
+					}
+
+					// Removes first, then sets — a fixed, documented order since
+					// urfave/cli doesn't preserve relative order between two
+					// different repeatable flags.
+					for _, path := range removes {
+						if path == "" {
+							return fmt.Errorf("empty --remove path")
+						}
+						doc, err = client.RemoveAttrPath(doc, client.ParseAttrPath(path))
+						if err != nil {
+							return fmt.Errorf("--remove %q: %v", path, err)
+						}
+					}
+					for _, kv := range sets {
+						path, value, ok := strings.Cut(kv, "=")
+						if !ok || path == "" {
+							return fmt.Errorf("invalid --set %q: expected path=value", kv)
+						}
+						doc, err = client.SetAttrPath(doc, client.ParseAttrPath(path), client.ParseAttrValue(value))
+						if err != nil {
+							return fmt.Errorf("--set %q: %v", kv, err)
+						}
+					}
+
+					encoded, err := json.Marshal(doc)
+					if err != nil {
+						return fmt.Errorf("failed to encode result: %v", err)
+					}
+
+					newValue, err := encryptIfSecret(string(encoded), secret)
+					if err != nil {
+						return err
+					}
+
+					if err := cl.VaultSet(key, newValue); err != nil {
+						return fmt.Errorf("Request failed: %v", err)
+					}
+
+					fmt.Printf("✓ Updated %s\n", key)
 					return nil
 				},
 			},

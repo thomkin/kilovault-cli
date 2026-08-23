@@ -215,6 +215,45 @@ secret. If a value is encrypted and no secret (or the wrong secret) is
 supplied to `get`, the command fails with an error rather than printing
 ciphertext or garbage.
 
+### Attribute Edits
+
+Add, replace, or remove individual attributes inside a JSON-object vault
+value without hand-editing the whole blob. The CLI fetches the current
+value, decrypts it locally (same secret handling as `get`/`set`), applies
+all `--set`/`--remove` edits to it in memory, and writes the result back
+with a single `set` — the server never sees plaintext or intermediate
+state.
+
+```bash
+# Add/replace a top-level attribute
+kilovault attr -k user1 --set active=true
+
+# Nested dot-path, and multiple edits in one call (applied atomically —
+# either everything succeeds and is written, or nothing is)
+kilovault attr -k user1 --set profile.name=Jordan --remove profile.oldField
+
+# Array elements are addressed by numeric index; setting index == length
+# appends, removing an index splices it out
+kilovault attr -k user1 --set tags.0=admin --remove tags.1
+
+# With an encryption secret, same as get/set
+kilovault attr -k user1 --set active=false -s "my-secret"
+```
+
+Notes:
+- `--set path=value`: `value` is parsed as JSON first (`true`, `123`,
+  `"quoted string"`, `{"a":1}`, `[1,2]`); anything that isn't valid JSON is
+  stored as a plain string.
+- If `-k` doesn't exist yet, it's created starting from `{}`. If it exists
+  but isn't valid JSON, or a path doesn't already exist for
+  `--remove`/a non-leaf `--set` segment, the command errors out and writes
+  nothing.
+- `--remove` is applied before `--set` when both are given in the same
+  call (fixed order — the CLI can't otherwise tell which flag came first
+  on the command line).
+- Removes/sets are flag-based only — there's no `$EDITOR`/interactive mode,
+  so decrypted plaintext never touches disk.
+
 ### System Status
 
 ```bash

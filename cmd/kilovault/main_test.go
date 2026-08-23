@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -553,4 +554,370 @@ func newFakeAdminServer(store map[string]string) *httptest.Server {
 			http.Error(w, "unknown method: "+req.Method, http.StatusBadRequest)
 		}
 	}))
+}
+
+// attrGet runs `attr` then a plain `get` to read back the raw stored JSON,
+// returning it decoded for easy field assertions in tests below.
+func attrGetJSON(t *testing.T, serverURL, key string) map[string]interface{} {
+	t.Helper()
+	stdout, stderr, err := runCLIArgs(t, "-e", serverURL, "get", "-k", key)
+	if err != nil {
+		t.Fatalf("get failed: %v\n%s", err, stderr)
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("stored value is not valid JSON: %v\nvalue: %s", err, stdout)
+	}
+	return doc
+}
+
+func TestAttr_SetAddsNewTopLevelAttribute(t *testing.T) {
+	store := map[string]string{"mykey": `{"a":1}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--set", "b=2"); err != nil {
+		t.Fatalf("attr failed: %v\n%s", err, stderr)
+	}
+
+	got := attrGetJSON(t, server.URL, "mykey")
+	want := map[string]interface{}{"a": float64(1), "b": float64(2)}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("stored doc = %#v, want %#v", got, want)
+	}
+}
+
+func TestAttr_SetNestedDotPathWhenIntermediateExists(t *testing.T) {
+	store := map[string]string{"mykey": `{"user":{"name":"old","keep":1}}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--set", "user.name=new"); err != nil {
+		t.Fatalf("attr failed: %v\n%s", err, stderr)
+	}
+
+	got := attrGetJSON(t, server.URL, "mykey")
+	want := map[string]interface{}{"user": map[string]interface{}{"name": "new", "keep": float64(1)}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("stored doc = %#v, want %#v", got, want)
+	}
+}
+
+func TestAttr_SetMissingIntermediateErrorsAndWritesNothing(t *testing.T) {
+	store := map[string]string{"mykey": `{}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--set", "a.b.c=1")
+	if err == nil {
+		t.Fatalf("expected error setting through a missing intermediate object, got none")
+	}
+	if !strings.Contains(stderr, "does not exist") {
+		t.Errorf("stderr = %q, want it to mention the missing path segment", stderr)
+	}
+	if store["mykey"] != `{}` {
+		t.Errorf("store[mykey] = %q, want unchanged %q", store["mykey"], `{}`)
+	}
+}
+
+func TestAttr_RemoveTopLevelAndNestedAttribute(t *testing.T) {
+	store := map[string]string{"mykey": `{"a":1,"user":{"name":"x","keep":2}}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--remove", "a", "--remove", "user.name"); err != nil {
+		t.Fatalf("attr failed: %v\n%s", err, stderr)
+	}
+
+	got := attrGetJSON(t, server.URL, "mykey")
+	want := map[string]interface{}{"user": map[string]interface{}{"keep": float64(2)}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("stored doc = %#v, want %#v", got, want)
+	}
+}
+
+func TestAttr_RemoveMissingPathErrorsAndWritesNothing(t *testing.T) {
+	store := map[string]string{"mykey": `{"a":1}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--remove", "missing")
+	if err == nil {
+		t.Fatalf("expected error removing a path that doesn't exist, got none")
+	}
+	if !strings.Contains(stderr, "does not exist") {
+		t.Errorf("stderr = %q, want it to mention the missing path", stderr)
+	}
+	if store["mykey"] != `{"a":1}` {
+		t.Errorf("store[mykey] = %q, want unchanged %q", store["mykey"], `{"a":1}`)
+	}
+}
+
+func TestAttr_SetAndRemoveCombinedInOneCall(t *testing.T) {
+	store := map[string]string{"mykey": `{"a":1,"b":2}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--set", "c=3", "--remove", "a"); err != nil {
+		t.Fatalf("attr failed: %v\n%s", err, stderr)
+	}
+
+	got := attrGetJSON(t, server.URL, "mykey")
+	want := map[string]interface{}{"b": float64(2), "c": float64(3)}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("stored doc = %#v, want %#v", got, want)
+	}
+}
+
+func TestAttr_SetOnMissingKeyInitializesEmptyObject(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "newkey", "--set", "a=1"); err != nil {
+		t.Fatalf("attr failed: %v\n%s", err, stderr)
+	}
+
+	got := attrGetJSON(t, server.URL, "newkey")
+	want := map[string]interface{}{"a": float64(1)}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("stored doc = %#v, want %#v", got, want)
+	}
+}
+
+func TestAttr_RemoveOnMissingKeyErrorsAndWritesNothing(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "newkey", "--remove", "a")
+	if err == nil {
+		t.Fatalf("expected error removing from a key that doesn't exist yet, got none")
+	}
+	if !strings.Contains(stderr, "does not exist") {
+		t.Errorf("stderr = %q, want it to mention the missing path", stderr)
+	}
+	if _, exists := store["newkey"]; exists {
+		t.Errorf("expected newkey to remain unwritten, got %q", store["newkey"])
+	}
+}
+
+func TestAttr_ExistingScalarTopLevelValueErrors(t *testing.T) {
+	store := map[string]string{"mykey": `"hello"`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--set", "a=1")
+	if err == nil {
+		t.Fatalf("expected error setting an attribute path into a scalar JSON value, got none")
+	}
+	if !strings.Contains(stderr, "expects an object") {
+		t.Errorf("stderr = %q, want it to mention the object/scalar mismatch", stderr)
+	}
+	if store["mykey"] != `"hello"` {
+		t.Errorf("store[mykey] = %q, want unchanged %q", store["mykey"], `"hello"`)
+	}
+}
+
+func TestAttr_ExistingInvalidJSONErrorsAndWritesNothing(t *testing.T) {
+	store := map[string]string{"mykey": `not-json{`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--set", "a=1")
+	if err == nil {
+		t.Fatalf("expected error editing a non-JSON existing value, got none")
+	}
+	if !strings.Contains(stderr, "not valid JSON") {
+		t.Errorf("stderr = %q, want it to mention invalid JSON", stderr)
+	}
+	if store["mykey"] != `not-json{` {
+		t.Errorf("store[mykey] = %q, want unchanged %q", store["mykey"], `not-json{`)
+	}
+}
+
+func TestAttr_SetValueAutoDetectsType(t *testing.T) {
+	store := map[string]string{"mykey": `{}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey",
+		"--set", "flagBool=true",
+		"--set", "flagNum=42",
+		"--set", `flagStr="hi"`,
+		"--set", `flagObj={"x":1}`,
+		"--set", "flagArr=[1,2]",
+		"--set", "flagPlain=helloworld",
+	)
+	if err != nil {
+		t.Fatalf("attr failed: %v\n%s", err, stderr)
+	}
+
+	got := attrGetJSON(t, server.URL, "mykey")
+	want := map[string]interface{}{
+		"flagBool":  true,
+		"flagNum":   float64(42),
+		"flagStr":   "hi",
+		"flagObj":   map[string]interface{}{"x": float64(1)},
+		"flagArr":   []interface{}{float64(1), float64(2)},
+		"flagPlain": "helloworld",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("stored doc = %#v, want %#v", got, want)
+	}
+}
+
+func TestAttr_ArraySetReplaceAndAppend(t *testing.T) {
+	store := map[string]string{"mykey": `{"tags":["a","b"]}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--set", "tags.0=z", "--set", "tags.2=c"); err != nil {
+		t.Fatalf("attr failed: %v\n%s", err, stderr)
+	}
+
+	got := attrGetJSON(t, server.URL, "mykey")
+	want := map[string]interface{}{"tags": []interface{}{"z", "b", "c"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("stored doc = %#v, want %#v", got, want)
+	}
+}
+
+func TestAttr_ArraySetOutOfBoundsGapErrorsAndWritesNothing(t *testing.T) {
+	store := map[string]string{"mykey": `{"tags":["a","b"]}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--set", "tags.5=x")
+	if err == nil {
+		t.Fatalf("expected error setting an out-of-range array index, got none")
+	}
+	if !strings.Contains(stderr, "out of range") {
+		t.Errorf("stderr = %q, want it to mention the out-of-range index", stderr)
+	}
+	if store["mykey"] != `{"tags":["a","b"]}` {
+		t.Errorf("store[mykey] = %q, want unchanged", store["mykey"])
+	}
+}
+
+func TestAttr_ArrayRemoveSplicesRatherThanNullingOut(t *testing.T) {
+	store := map[string]string{"mykey": `{"tags":["a","b","c"]}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--remove", "tags.1"); err != nil {
+		t.Fatalf("attr failed: %v\n%s", err, stderr)
+	}
+
+	got := attrGetJSON(t, server.URL, "mykey")
+	want := map[string]interface{}{"tags": []interface{}{"a", "c"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("stored doc = %#v, want %#v (expected splice, not null-out)", got, want)
+	}
+}
+
+func TestAttr_ArrayRemoveOutOfBoundsErrorsAndWritesNothing(t *testing.T) {
+	store := map[string]string{"mykey": `{"tags":["a","b"]}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--remove", "tags.5")
+	if err == nil {
+		t.Fatalf("expected error removing an out-of-range array index, got none")
+	}
+	if !strings.Contains(stderr, "out of range") {
+		t.Errorf("stderr = %q, want it to mention the out-of-range index", stderr)
+	}
+	if store["mykey"] != `{"tags":["a","b"]}` {
+		t.Errorf("store[mykey] = %q, want unchanged", store["mykey"])
+	}
+}
+
+func TestAttr_FailingEditInBatchAbortsWholeBatch(t *testing.T) {
+	store := map[string]string{"mykey": `{"a":1}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	// The --set would succeed on its own; the --remove targets a path that
+	// doesn't exist. Per FR10, the whole batch must abort with nothing
+	// written, not just the failing edit.
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--set", "b=2", "--remove", "missing")
+	if err == nil {
+		t.Fatalf("expected error from the failing --remove, got none")
+	}
+	if !strings.Contains(stderr, "does not exist") {
+		t.Errorf("stderr = %q, want it to mention the missing path", stderr)
+	}
+	if store["mykey"] != `{"a":1}` {
+		t.Errorf("store[mykey] = %q, want unchanged (no partial write of the earlier --set)", store["mykey"])
+	}
+}
+
+func TestAttr_EncryptionSecretRoundTrip(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--set", "a=1", "-s", "the-secret"); err != nil {
+		t.Fatalf("attr failed: %v\n%s", err, stderr)
+	}
+	if !strings.HasPrefix(store["mykey"], "enc:v1:") {
+		t.Errorf("expected stored value to carry enc:v1: prefix, got %q", store["mykey"])
+	}
+
+	stdout, stderr, err := runCLIArgs(t, "-e", server.URL, "get", "-k", "mykey", "-s", "the-secret")
+	if err != nil {
+		t.Fatalf("get failed: %v\n%s", err, stderr)
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &doc); err != nil {
+		t.Fatalf("decrypted value is not valid JSON: %v", err)
+	}
+	if !reflect.DeepEqual(doc, map[string]interface{}{"a": float64(1)}) {
+		t.Errorf("decrypted doc = %#v, want {\"a\":1}", doc)
+	}
+}
+
+func TestAttr_MissingKeyFlagErrors(t *testing.T) {
+	_, stderr, err := runCLIArgs(t, "attr", "--set", "a=1")
+	if err == nil {
+		t.Fatalf("expected error when -k/--key is omitted, got none")
+	}
+	if !strings.Contains(stderr, "key required") {
+		t.Errorf("stderr = %q, want it to mention 'key required'", stderr)
+	}
+}
+
+func TestAttr_NoSetOrRemoveGivenErrors(t *testing.T) {
+	_, stderr, err := runCLIArgs(t, "attr", "-k", "mykey")
+	if err == nil {
+		t.Fatalf("expected error when neither --set nor --remove is given, got none")
+	}
+	if !strings.Contains(stderr, "--set or --remove") {
+		t.Errorf("stderr = %q, want it to mention --set/--remove", stderr)
+	}
+}
+
+func TestAttr_StrayPositionalArgErrors(t *testing.T) {
+	_, stderr, err := runCLIArgs(t, "attr", "-k", "mykey", "--set", "a=1", "extra-arg")
+	if err == nil {
+		t.Fatalf("expected error for stray positional argument, got none")
+	}
+	if !strings.Contains(stderr, "unexpected argument") {
+		t.Errorf("stderr = %q, want it to mention 'unexpected argument'", stderr)
+	}
+}
+
+func TestAttr_InvalidSetSyntaxErrors(t *testing.T) {
+	store := map[string]string{"mykey": `{}`}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "attr", "-k", "mykey", "--set", "no-equals-sign")
+	if err == nil {
+		t.Fatalf("expected error for --set without '=', got none")
+	}
+	if !strings.Contains(stderr, "path=value") {
+		t.Errorf("stderr = %q, want it to mention the expected path=value syntax", stderr)
+	}
 }
