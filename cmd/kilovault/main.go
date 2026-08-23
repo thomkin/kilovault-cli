@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/thomkin/kilovault-cli/pkg/client"
+	"github.com/thomkin/kilovault-cli/pkg/service"
 	"github.com/urfave/cli/v2"
 )
 
@@ -91,6 +92,12 @@ func main() {
 								cfg.JWTSecret = value
 							case "secret":
 								cfg.Secret = value
+							case "sync-keys":
+								parsed, err := client.ParseSyncKeys(value)
+								if err != nil {
+									return err
+								}
+								cfg.SyncKeys = parsed
 							default:
 								return fmt.Errorf("unknown config key: %s", key)
 							}
@@ -126,6 +133,9 @@ func main() {
 								fmt.Println(cfg.JWTSecret)
 							case "secret":
 								fmt.Println(cfg.Secret)
+							case "sync-keys":
+								data, _ := json.Marshal(cfg.SyncKeys)
+								fmt.Println(string(data))
 							default:
 								return fmt.Errorf("unknown config key: %s", key)
 							}
@@ -169,6 +179,8 @@ func main() {
 								cfg.JWTSecret = ""
 							case "secret":
 								cfg.Secret = ""
+							case "sync-keys":
+								cfg.SyncKeys = nil
 							default:
 								return fmt.Errorf("unknown config key: %s", key)
 							}
@@ -284,6 +296,18 @@ func main() {
 
 					fmt.Printf("✓ Set %s\n", key)
 					return nil
+				},
+			},
+			{
+				Name:   "fetch",
+				Usage:  "Fetch configured vault keys and write YAML/.env/Ansible-facts files (invoked by the systemd service, not meant to be run interactively)",
+				Action: runFetch,
+			},
+			{
+				Name:  "install-service",
+				Usage: "Install and enable the systemd service that runs `fetch` at boot (must be run as root)",
+				Action: func(c *cli.Context) error {
+					return service.Install()
 				},
 			},
 			{

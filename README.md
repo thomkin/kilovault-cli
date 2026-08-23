@@ -246,3 +246,106 @@ kilovault admin history -u <userId> -t <admin-token>
 # Cleanup old history
 kilovault admin cleanup -t <admin-token>
 ```
+
+### Automatic Boot Sync via systemd
+
+On a Linux host, `kilovault` can install itself as a systemd service that
+fetches a configured set of vault keys at every boot and writes them to
+local files other applications on that host can read — without those
+applications ever touching the network or the auth token themselves.
+
+This section documents the full contract so infrastructure tooling (e.g.
+a Terraform module) can provision a host correctly by reading this file
+alone.
+
+**Two new commands:**
+
+- `kilovault install-service` — run once, as root. Sets up everything
+  needed for the sync to run automatically on every future boot:
+  - Creates the `kilovault-consumers` system group (if missing).
+  - Creates a dedicated `kilovault` system user (if missing), whose
+    **primary group is `kilovault-consumers`** — this is what makes
+    every file `fetch` writes automatically group-readable by consumers,
+    with no separate ACL step.
+  - Creates `/var/lib/kilovault/.config/kilovault/` (mode `0700`, owned
+    by the `kilovault` user) — left empty, ready for config to be
+    written into it afterward.
+  - Installs and enables (but does **not** start) the
+    `kilovault-fetch.service` systemd unit.
+  - Idempotent: safe to re-run (e.g. after a binary upgrade); never
+    touches an existing `config.json`.
+- `kilovault fetch` — the boot-time logic itself, invoked by the
+  installed unit. Not meant to be run interactively. Reads the
+  `sync-keys` config (below), fetches each key, and writes the three
+  output files described below. Fails loudly (non-zero exit) if the
+  server is unreachable, a configured key isn't set, or decryption
+  fails — it never writes partial output.
+
+**Provisioning sequence (e.g. from Terraform):**
+
+1. Deliver the `kilovault` binary to the host (e.g. downloaded from the
+   release bucket for a pinned version tag) and make it executable.
+2. Run `kilovault install-service` as root.
+3. As the `kilovault` user, populate its config — same `config set`
+   command used for interactive use, run for this user's config file
+   instead of your own:
+   ```bash
+   sudo -u kilovault kilovault config set endpoint https://your-kilovault-endpoint
+   sudo -u kilovault kilovault config set token <scoped-vault.get-only-token>
+   sudo -u kilovault kilovault config set secret <decryption-secret>   # only if values are encrypted
+   sudo -u kilovault kilovault config set sync-keys '[{"key":"db_password","as":"DB_PASSWORD"},{"key":"api_key"}]'
+   ```
+   The token here **must be a scoped token** (e.g. `vault.get` only, for
+   one `userId`) minted the same way described in "Token Structure"
+   above — never the master `JWT_SECRET`. `JWT_SECRET` should stay in
+   whatever secret store mints tokens (e.g. Terraform state) and should
+   never land on this host.
+4. **Start the service once, immediately** —
+   `install-service` only *enables* the unit for future boots; it
+   deliberately does not start it, since config doesn't exist until this
+   step:
+   ```bash
+   systemctl start kilovault-fetch.service
+   ```
+5. Add any local accounts that need to read the synced values (an app's
+   own service user, or `root` for `ansible-pull`) to the
+   `kilovault-consumers` group:
+   ```bash
+   usermod -aG kilovault-consumers <consumer-user>
+   ```
+
+After that, every subsequent boot runs `fetch` automatically — no
+further provisioning steps needed unless the token or `sync-keys` value
+changes, in which case re-run step 3 and `systemctl restart
+kilovault-fetch.service` to apply it immediately.
+
+**`sync-keys` config value** — a JSON array of `{key, as}` entries. `key`
+is the vault key name to fetch; `as` is optional and overrides the local
+output name (env var name / YAML key / Ansible fact name) — if omitted,
+`key` is used for both. Every resolved output name must be a valid
+env-var name (`^[A-Za-z_][A-Za-z0-9_]*$`), and output names must be
+unique across the list.
+
+```bash
+kilovault config set sync-keys '[{"key":"db_password","as":"DB_PASSWORD"},{"key":"api_key"}]'
+```
+
+**Output files** — written to systemd's runtime directory for this
+service, `/run/kilovault/`, owned `kilovault:kilovault-consumers`, mode
+`0640`. By design, **none of this survives a reboot**: systemd creates
+`/run/kilovault` fresh (tmpfs) on every service start and removes it on
+stop, so a restart always forces a clean re-fetch from the server rather
+than leaving stale secret material on disk.
+
+- `/run/kilovault/env.yaml` — flat `name: value` YAML mapping.
+- `/run/kilovault/.env` — `NAME="value"` per line, dotenv-compatible
+  quoting/escaping (works with godotenv, python-dotenv, `docker run
+  --env-file`, etc.).
+- `/run/kilovault/kilovault.fact` — Ansible custom facts, JSON. To have
+  Ansible (including `ansible-pull`) pick this up automatically as
+  `ansible_local.kilovault.*`, point its `fact_path` at this directory —
+  in `ansible.cfg`:
+  ```ini
+  [defaults]
+  fact_path = /run/kilovault
+  ```
