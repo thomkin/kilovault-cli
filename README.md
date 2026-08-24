@@ -186,6 +186,11 @@ kilovault get -k mykey -t <token>
 # With environment token
 export KILOVAULT_USER_TOKEN=mytoken
 kilovault get -k mykey
+
+# Set from a file instead of inline (handy for larger JSON blobs) —
+# -v and -f are mutually exclusive, exactly one is required
+kilovault set -k mykey -f ./mykey.json
+kilovault admin set -u <userId> -k mykey -f ./mykey.json -s "my-secret"
 ```
 
 ### Encryption Secret

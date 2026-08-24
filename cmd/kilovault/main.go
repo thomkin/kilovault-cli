@@ -51,6 +51,34 @@ func decryptIfNeeded(value, secret string) (string, error) {
 	return decrypted, nil
 }
 
+// resolveValueFlags resolves the -v/-f pair shared by set and admin
+// set: exactly one of literal/filePath must be given. filePath is read
+// and a single trailing newline (\n or \r\n) is stripped if present.
+func resolveValueFlags(literal, filePath string) (string, error) {
+	if literal != "" && filePath != "" {
+		return "", fmt.Errorf("only one of -v/--value or -f/--value-file may be given")
+	}
+	if literal == "" && filePath == "" {
+		return "", fmt.Errorf("value required: use -v/--value or -f/--value-file")
+	}
+	if literal != "" {
+		return literal, nil
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read value file %q: %v", filePath, err)
+	}
+
+	value := strings.TrimSuffix(string(data), "\n")
+	value = strings.TrimSuffix(value, "\r")
+
+	if value == "" {
+		return "", fmt.Errorf("value required: file %q is empty", filePath)
+	}
+	return value, nil
+}
+
 func main() {
 	app := &cli.App{
 		Name:    "kilovault-cli",
@@ -261,7 +289,12 @@ func main() {
 					&cli.StringFlag{
 						Name:    "value",
 						Aliases: []string{"v"},
-						Usage:   "Value to set (required)",
+						Usage:   "Value to set (required unless -f is given)",
+					},
+					&cli.StringFlag{
+						Name:    "value-file",
+						Aliases: []string{"f"},
+						Usage:   "Read value from this file instead of -v (required unless -v is given)",
 					},
 					&cli.StringFlag{
 						Name:    "token",
@@ -279,15 +312,15 @@ func main() {
 					if key == "" {
 						return fmt.Errorf("key required: use -k/--key")
 					}
-					value := c.String("value")
-					if value == "" {
-						return fmt.Errorf("value required: use -v/--value")
+					value, err := resolveValueFlags(c.String("value"), c.String("value-file"))
+					if err != nil {
+						return err
 					}
 					if c.NArg() > 0 {
-						return fmt.Errorf("unexpected argument(s): %v (use -k/--key and -v/--value to specify the key and value)", c.Args().Slice())
+						return fmt.Errorf("unexpected argument(s): %v (use -k/--key and -v/--value or -f/--value-file to specify the key and value)", c.Args().Slice())
 					}
 
-					value, err := encryptIfSecret(value, client.ResolveSecret(c.String("secret")))
+					value, err = encryptIfSecret(value, client.ResolveSecret(c.String("secret")))
 					if err != nil {
 						return err
 					}
@@ -667,7 +700,12 @@ func main() {
 							&cli.StringFlag{
 								Name:    "value",
 								Aliases: []string{"v"},
-								Usage:   "Value to set (required)",
+								Usage:   "Value to set (required unless -f is given)",
+							},
+							&cli.StringFlag{
+								Name:    "value-file",
+								Aliases: []string{"f"},
+								Usage:   "Read value from this file instead of -v (required unless -v is given)",
 							},
 							&cli.StringFlag{
 								Name:    "token",
@@ -689,15 +727,15 @@ func main() {
 							if key == "" {
 								return fmt.Errorf("key required: use -k/--key")
 							}
-							value := c.String("value")
-							if value == "" {
-								return fmt.Errorf("value required: use -v/--value")
+							value, err := resolveValueFlags(c.String("value"), c.String("value-file"))
+							if err != nil {
+								return err
 							}
 							if c.NArg() > 0 {
-								return fmt.Errorf("unexpected argument(s): %v (use -u/--user, -k/--key and -v/--value to specify the user, key and value)", c.Args().Slice())
+								return fmt.Errorf("unexpected argument(s): %v (use -u/--user, -k/--key and -v/--value or -f/--value-file to specify the user, key and value)", c.Args().Slice())
 							}
 
-							value, err := encryptIfSecret(value, client.ResolveSecret(c.String("secret")))
+							value, err = encryptIfSecret(value, client.ResolveSecret(c.String("secret")))
 							if err != nil {
 								return err
 							}

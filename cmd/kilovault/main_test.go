@@ -921,3 +921,243 @@ func TestAttr_InvalidSetSyntaxErrors(t *testing.T) {
 		t.Errorf("stderr = %q, want it to mention the expected path=value syntax", stderr)
 	}
 }
+
+func writeTempFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "value.json")
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+	return path
+}
+
+func TestSet_ValueFromFile(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	path := writeTempFile(t, `{"a":1}`)
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "set", "-k", "mykey", "-f", path); err != nil {
+		t.Fatalf("set failed: %v\n%s", err, stderr)
+	}
+	if store["mykey"] != `{"a":1}` {
+		t.Errorf("store[mykey] = %q, want %q", store["mykey"], `{"a":1}`)
+	}
+}
+
+func TestSet_ValueLiteralStillWorksUnchanged(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "set", "-k", "mykey", "-v", "myvalue"); err != nil {
+		t.Fatalf("set failed: %v\n%s", err, stderr)
+	}
+	if store["mykey"] != "myvalue" {
+		t.Errorf("store[mykey] = %q, want %q", store["mykey"], "myvalue")
+	}
+}
+
+func TestSet_ValueFileSingleTrailingNewlineStripped(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	path := writeTempFile(t, "myvalue\n")
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "set", "-k", "mykey", "-f", path); err != nil {
+		t.Fatalf("set failed: %v\n%s", err, stderr)
+	}
+	if store["mykey"] != "myvalue" {
+		t.Errorf("store[mykey] = %q, want %q (trailing newline stripped)", store["mykey"], "myvalue")
+	}
+}
+
+func TestSet_ValueFileCRLFTrailingNewlineStripped(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	path := writeTempFile(t, "myvalue\r\n")
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "set", "-k", "mykey", "-f", path); err != nil {
+		t.Fatalf("set failed: %v\n%s", err, stderr)
+	}
+	if store["mykey"] != "myvalue" {
+		t.Errorf("store[mykey] = %q, want %q (trailing CRLF stripped)", store["mykey"], "myvalue")
+	}
+}
+
+func TestSet_ValueFileNoTrailingNewlineUnchanged(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	path := writeTempFile(t, "myvalue")
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "set", "-k", "mykey", "-f", path); err != nil {
+		t.Fatalf("set failed: %v\n%s", err, stderr)
+	}
+	if store["mykey"] != "myvalue" {
+		t.Errorf("store[mykey] = %q, want %q (unchanged, no trailing newline to strip)", store["mykey"], "myvalue")
+	}
+}
+
+func TestSet_ValueFileMultipleTrailingNewlinesOnlyLastStripped(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	path := writeTempFile(t, "myvalue\n\n\n")
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "set", "-k", "mykey", "-f", path); err != nil {
+		t.Fatalf("set failed: %v\n%s", err, stderr)
+	}
+	if store["mykey"] != "myvalue\n\n" {
+		t.Errorf("store[mykey] = %q, want %q (only the last trailing newline stripped)", store["mykey"], "myvalue\n\n")
+	}
+}
+
+func TestSet_ValueFileMissingErrorsAndWritesNothing(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	missing := filepath.Join(t.TempDir(), "does-not-exist.json")
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "set", "-k", "mykey", "-f", missing)
+	if err == nil {
+		t.Fatalf("expected error for missing value file, got none")
+	}
+	if !strings.Contains(stderr, "failed to read value file") {
+		t.Errorf("stderr = %q, want it to mention the file read failure", stderr)
+	}
+	if _, exists := store["mykey"]; exists {
+		t.Errorf("expected mykey to remain unwritten, got %q", store["mykey"])
+	}
+}
+
+func TestSet_ValueFileEmptyErrorsAndWritesNothing(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	path := writeTempFile(t, "")
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "set", "-k", "mykey", "-f", path)
+	if err == nil {
+		t.Fatalf("expected error for empty value file, got none")
+	}
+	if !strings.Contains(stderr, "value required") {
+		t.Errorf("stderr = %q, want it to mention 'value required'", stderr)
+	}
+	if _, exists := store["mykey"]; exists {
+		t.Errorf("expected mykey to remain unwritten, got %q", store["mykey"])
+	}
+}
+
+func TestSet_ValueFileOnlyNewlineErrorsAsEmpty(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	path := writeTempFile(t, "\n")
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "set", "-k", "mykey", "-f", path)
+	if err == nil {
+		t.Fatalf("expected error for a file that's only a newline, got none")
+	}
+	if !strings.Contains(stderr, "value required") {
+		t.Errorf("stderr = %q, want it to mention 'value required'", stderr)
+	}
+}
+
+func TestSet_BothValueAndValueFileErrorsAndWritesNothing(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	path := writeTempFile(t, "file-value")
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "set", "-k", "mykey", "-v", "literal-value", "-f", path)
+	if err == nil {
+		t.Fatalf("expected error when both -v and -f are given, got none")
+	}
+	if !strings.Contains(stderr, "only one of") {
+		t.Errorf("stderr = %q, want it to mention the mutual-exclusivity rule", stderr)
+	}
+	if _, exists := store["mykey"]; exists {
+		t.Errorf("expected mykey to remain unwritten, got %q", store["mykey"])
+	}
+}
+
+func TestSet_NeitherValueNorValueFileErrors(t *testing.T) {
+	_, stderr, err := runCLIArgs(t, "set", "-k", "mykey")
+	if err == nil {
+		t.Fatalf("expected error when neither -v nor -f is given, got none")
+	}
+	if !strings.Contains(stderr, "value required") {
+		t.Errorf("stderr = %q, want it to mention 'value required'", stderr)
+	}
+	if !strings.Contains(stderr, "-f/--value-file") {
+		t.Errorf("stderr = %q, want it to mention -f/--value-file", stderr)
+	}
+}
+
+func TestSet_ValueFileWithSecretRoundTrip(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeVaultServer(store)
+	defer server.Close()
+
+	path := writeTempFile(t, `{"a":1}`+"\n")
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "set", "-k", "mykey", "-f", path, "-s", "the-secret"); err != nil {
+		t.Fatalf("set failed: %v\n%s", err, stderr)
+	}
+	if !strings.HasPrefix(store["mykey"], "enc:v1:") {
+		t.Errorf("expected stored value to carry enc:v1: prefix, got %q", store["mykey"])
+	}
+
+	stdout, stderr, err := runCLIArgs(t, "-e", server.URL, "get", "-k", "mykey", "-s", "the-secret")
+	if err != nil {
+		t.Fatalf("get failed: %v\n%s", err, stderr)
+	}
+	if got := strings.TrimSpace(stdout); got != `{"a":1}` {
+		t.Errorf("get = %q, want %q (newline-stripped file content)", got, `{"a":1}`)
+	}
+}
+
+func TestAdminSet_ValueFromFile(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeAdminServer(store)
+	defer server.Close()
+
+	path := writeTempFile(t, `{"a":1}`)
+
+	if _, stderr, err := runCLIArgs(t, "-e", server.URL, "admin", "set", "-u", "user1", "-k", "mykey", "-f", path); err != nil {
+		t.Fatalf("admin set failed: %v\n%s", err, stderr)
+	}
+	if store["user1/mykey"] != `{"a":1}` {
+		t.Errorf("store[user1/mykey] = %q, want %q", store["user1/mykey"], `{"a":1}`)
+	}
+}
+
+func TestAdminSet_BothValueAndValueFileErrors(t *testing.T) {
+	store := map[string]string{}
+	server := newFakeAdminServer(store)
+	defer server.Close()
+
+	path := writeTempFile(t, "file-value")
+
+	_, stderr, err := runCLIArgs(t, "-e", server.URL, "admin", "set", "-u", "user1", "-k", "mykey", "-v", "literal", "-f", path)
+	if err == nil {
+		t.Fatalf("expected error when both -v and -f are given, got none")
+	}
+	if !strings.Contains(stderr, "only one of") {
+		t.Errorf("stderr = %q, want it to mention the mutual-exclusivity rule", stderr)
+	}
+	if _, exists := store["user1/mykey"]; exists {
+		t.Errorf("expected user1/mykey to remain unwritten, got %q", store["user1/mykey"])
+	}
+}
