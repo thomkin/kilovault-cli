@@ -77,7 +77,7 @@ func fakeEditor(t *testing.T, newDoc string) (env []string, seenPath string) {
 	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
-	return []string{"EDITOR=" + script, "VISUAL="}, seenPath
+	return []string{editorEnv + "=" + script}, seenPath
 }
 
 func TestProfiles_PullStoresEncryptedFiles(t *testing.T) {
@@ -339,5 +339,49 @@ func TestProfiles_RequireInit(t *testing.T) {
 	_, stderr, err := runCLIHome(t, t.TempDir(), masterEnv(testMasterPW), "", "profiles", "pull")
 	if err == nil || !strings.Contains(stderr, "kilovault init") {
 		t.Errorf("err=%v stderr=%s", err, stderr)
+	}
+}
+
+func TestResolveEditor_Order(t *testing.T) {
+	bin := t.TempDir()
+	fake := func(name string) string {
+		p := filepath.Join(bin, name)
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("EDITOR", "nano")
+	t.Setenv("VISUAL", "")
+	t.Setenv(editorEnv, "")
+
+	// No vi-family editor installed: fall back to $EDITOR.
+	if got, err := resolveEditor(); err != nil || got != "nano" {
+		t.Errorf("fallback = %q, %v; want nano", got, err)
+	}
+
+	// vi beats $EDITOR; nvim beats vi.
+	vi := fake("vi")
+	if got, _ := resolveEditor(); got != vi {
+		t.Errorf("with vi installed = %q, want %q", got, vi)
+	}
+	nvim := fake("nvim")
+	if got, _ := resolveEditor(); got != nvim {
+		t.Errorf("with nvim installed = %q, want %q", got, nvim)
+	}
+
+	// KILOVAULT_EDITOR beats everything.
+	t.Setenv(editorEnv, "code --wait")
+	if got, _ := resolveEditor(); got != "code --wait" {
+		t.Errorf("override = %q", got)
+	}
+
+	// Nothing at all: a clear error.
+	t.Setenv(editorEnv, "")
+	t.Setenv("EDITOR", "")
+	t.Setenv("PATH", t.TempDir())
+	if _, err := resolveEditor(); err == nil || !strings.Contains(err.Error(), editorEnv) {
+		t.Errorf("no editor: err = %v", err)
 	}
 }

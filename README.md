@@ -492,14 +492,22 @@ The decrypted document only ever exists in `$XDG_RUNTIME_DIR`
 or isn't tmpfs, and overwrites and deletes the file on every exit path,
 including Ctrl-C.
 
-**Editors.** `$VISUAL`, then `$EDITOR`, then `vi`.
+**Editors.** `profiles edit` uses, in order:
+
+1. `$KILOVAULT_EDITOR`, if set (e.g. `export KILOVAULT_EDITOR=nano`);
+2. otherwise the first installed of `nvim`, `vim`, `vi`;
+3. only if none of those exists, `$VISUAL` / `$EDITOR`.
+
+The vi family comes before `$VISUAL`/`$EDITOR` on purpose: it's the only
+editor family whose own copies of the file kilovault can switch off.
+Other programs keep using your `$EDITOR` as usual.
 
 - **vi / vim / nvim**: swap, backup, undo and viminfo/shada files are
   switched off automatically.
 - **nano**: fine with its defaults (backups only with `-B` or `set backup`
   in a nanorc).
 - **GUI editors** need a flag to wait until you close the file, e.g.
-  `EDITOR="code --wait"` or `EDITOR="subl -w"`. **VS Code keeps copies of
+  `KILOVAULT_EDITOR="code --wait"` or `KILOVAULT_EDITOR="subl -w"`. **VS Code keeps copies of
   edited files in its Local History** (`~/.config/Code/User/History`, on
   disk): disable `workbench.localHistory.enabled` or use a terminal
   editor.

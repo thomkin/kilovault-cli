@@ -196,16 +196,41 @@ func editInRAM(runtimeDir, user string, content []byte, interactive bool) (map[s
 	}
 }
 
-// runEditor opens path in $VISUAL / $EDITOR (default vi). For vim-family
+// editorEnv overrides the editor for `profiles edit` only.
+const editorEnv = "KILOVAULT_EDITOR"
+
+// hardenedEditors are tried in order when KILOVAULT_EDITOR isn't set:
+// the vim family is the only one whose swap/backup/undo/history files we
+// can switch off, so it's preferred over $VISUAL/$EDITOR for editing
+// decrypted secrets.
+var hardenedEditors = []string{"nvim", "vim", "vi"}
+
+// resolveEditor picks the editor command: $KILOVAULT_EDITOR, else the
+// first installed of nvim/vim/vi, else $VISUAL / $EDITOR.
+func resolveEditor() (string, error) {
+	if editor := strings.TrimSpace(os.Getenv(editorEnv)); editor != "" {
+		return editor, nil
+	}
+	for _, name := range hardenedEditors {
+		if path, err := exec.LookPath(name); err == nil {
+			return path, nil
+		}
+	}
+	for _, env := range []string{"VISUAL", "EDITOR"} {
+		if editor := strings.TrimSpace(os.Getenv(env)); editor != "" {
+			return editor, nil
+		}
+	}
+	return "", fmt.Errorf("no editor found: install nvim, vim or vi, or set %s", editorEnv)
+}
+
+// runEditor opens path in the editor from resolveEditor. For vim-family
 // editors it disables swap, backup, undo and viminfo files, which could
 // otherwise copy the plaintext to disk.
 func runEditor(path string) error {
-	editor := os.Getenv("VISUAL")
-	if editor == "" {
-		editor = os.Getenv("EDITOR")
-	}
-	if editor == "" {
-		editor = "vi"
+	editor, err := resolveEditor()
+	if err != nil {
+		return err
 	}
 	fields := strings.Fields(editor)
 	args := fields[1:]
