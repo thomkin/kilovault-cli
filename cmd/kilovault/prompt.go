@@ -129,3 +129,26 @@ func isTerminal(f *os.File) bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
+// optionalSecret is like secret but returns nil (no error) for an empty
+// answer. Only used on a terminal; without one it returns nil at once so
+// piped input isn't consumed by optional prompts.
+func (p *prompter) optionalSecret(label string) ([]byte, error) {
+	if !p.tty {
+		return nil, nil
+	}
+	fmt.Fprintf(os.Stderr, "%s: ", label)
+	b, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil || len(b) == 0 {
+		return nil, err
+	}
+	return b, nil
+}
+
+// confirm asks a yes/no question; anything but y/yes (including no input)
+// is a no.
+func (p *prompter) confirm(question string) bool {
+	answer, _ := p.text(question+" [y/N]", "")
+	answer = strings.ToLower(answer)
+	return answer == "y" || answer == "yes"
+}
