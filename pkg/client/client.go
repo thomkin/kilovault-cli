@@ -154,6 +154,11 @@ func NewWithToken(baseURL, token string) *Client {
 	return c
 }
 
+// BaseURL is the resolved endpoint this client talks to.
+func (c *Client) BaseURL() string {
+	return c.baseURL
+}
+
 func (c *Client) SetToken(token string) {
 	c.token = token
 }
