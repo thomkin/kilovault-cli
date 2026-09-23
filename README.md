@@ -19,6 +19,23 @@ make install
 # Installs to $GOPATH/bin
 ```
 
+## Testing
+
+```bash
+make test
+```
+
+Tests of the admin workflow's unlock session use the Linux kernel
+keyring. Container runtimes block keyring syscalls by default (podman
+and Docker seccomp profiles), and those tests then **skip** rather than
+fail. To run them in a container, allow the syscalls, e.g.:
+
+```bash
+podman run --rm --security-opt seccomp=unconfined -v "$PWD":/src:Z -w /src golang:1.22 go test ./...
+```
+
+`profiles edit` tests need a tmpfs at `/dev/shm` and skip without one.
+
 ## Security Model
 
 **Token Generation**
@@ -26,6 +43,9 @@ make install
 - Only your machine needs `JWT_SECRET` (to verify you're authorized)
 - Server only needs `JWT_SECRET` (to verify token signatures)
 - If server is compromised, attacker cannot generate new tokens
+
+For administering many users' secrets without putting any of them on
+the command line, see "Admin Workflow: Encrypted Profiles" below.
 
 **Workflow**
 ```bash
@@ -374,6 +394,229 @@ plaintext value, append new `set`/`attr`/`delete` ops of your own — new
 ops you add don't need `"raw":true` unless you want that same
 write-through behavior), and `batch run` the result to apply the edits
 in bulk.
+
+### Admin Workflow: Encrypted Profiles
+
+For administering the secrets of **every** vault user from one machine.
+Each vault user is a *profile*: `pull` fetches all of them, you edit them
+as JSON in your editor, and `push` writes the changes back. Nothing
+sensitive is typed on the command line, and nothing readable is left on
+disk.
+
+This sits next to the commands above — `get`, `set`, `attr`, `admin …`,
+`batch`, `fetch` and the systemd service are unchanged, so hosts that
+fetch their keys keep working exactly as before. The admin workflow is
+Linux-only.
+
+#### One-time setup
+
+```console
+$ kilovault init
+Endpoint [http://localhost:5096]: https://vault.example.com
+Admin token: ••••••••                 (checked against the server)
+New master password: ••••••           (at least 12 characters)
+Repeat new master password: ••••••
+
+$ kilovault credentials set-secret -u alice
+E2E secret for alice: ••••••••
+✓ Verified against alice's encrypted values
+✓ Saved E2E secret for alice
+
+$ kilovault credentials backup -o /media/usb/kilovault-creds.backup
+Recovery passphrase: ••••••           (different from the master password; keep it offline)
+```
+
+- `init` stores the endpoint in `config.json` and the admin token in the
+  encrypted `credentials.enc`. The token needs `"admin": true` (see
+  "Token Structure").
+- Every profile has **its own E2E secret**. `set-secret` refuses a
+  secret that doesn't decrypt that user's existing values. You can also
+  skip this step: `profiles pull` asks for any missing secret on a
+  terminal, checks it and saves it.
+- **Make the backup.** The per-profile secrets exist only in
+  `credentials.enc`; if it's lost and there's no backup, every encrypted
+  value in the vault is unrecoverable — the server only has ciphertext.
+  The CLI keeps reminding you until a backup exists.
+
+#### Daily use
+
+```console
+$ kilovault unlock                    # master password once; default 15m, --timeout up to 12h
+$ kilovault profiles pull             # every user → encrypted local profile
+$ kilovault profiles edit -u alice    # edit in $EDITOR, review the diff, push
+$ kilovault profiles list             # keys, unpushed edits, secret stored?, last sync
+$ kilovault lock                      # optional; the session also just expires
+```
+
+| Command | What it does |
+|---|---|
+| `profiles pull [-u user] [--force]` | Fetch profiles from the vault. Skips (and reports) a profile with unpushed local edits unless `--force`, or one whose E2E secret is missing/wrong. |
+| `profiles edit -u user [-y] [--show-values]` | Pull (unless there are unpushed edits), open in `$EDITOR`, validate, show the diff, ask to push. Answering no keeps the edits (encrypted) for a later `push`. |
+| `profiles diff [-u user] [--show-values]` | Unpushed edits. Values are hidden unless `--show-values`. Works offline. |
+| `profiles push [-u user] [-y] [--force] [--show-values]` | Write unpushed edits to the vault after confirmation. |
+| `profiles new -u user` | Empty profile for a user with no keys yet, with a generated E2E secret. |
+| `profiles list` | Overview of the local profiles. |
+
+All `profiles` commands take `-d/--dir` (or `KILOVAULT_PROFILES_DIR`) to
+use another directory than `~/.config/kilovault/profiles`.
+
+#### Editing
+
+`profiles edit` shows the profile as one JSON object:
+
+```json
+{
+  "API_KEY": "abc 123",
+  "DB_PASSWORD": "hunter2",
+  "GRAFANA": {
+    "url": "https://grafana.example",
+    "auth": { "user": "x" }
+  }
+}
+```
+
+- A **string** is stored in the vault exactly as written.
+- An **object or array** (or number, `true`/`false`, `null`) is stored as
+  compact JSON text — e.g. a whole config file for a service. Vault
+  values that are JSON objects/arrays are shown this way; everything else
+  is shown as a string. Note `"PORT": 8080` is stored as the text `8080`
+  and comes back as `"PORT": "8080"`.
+- Remove a key to delete it. Empty strings aren't allowed.
+- Duplicate keys and syntax errors are reported with a line number, and
+  on a terminal you can re-open the file with your edits intact.
+- Reformatting alone is never a change: a value stored as `[1, 2]`
+  stays byte-for-byte as it was unless you actually change it.
+
+The decrypted document only ever exists in `$XDG_RUNTIME_DIR`
+(`/run/user/<uid>`, RAM-backed). `edit` refuses to run if that isn't set
+or isn't tmpfs, and overwrites and deletes the file on every exit path,
+including Ctrl-C.
+
+**Editors.** `$VISUAL`, then `$EDITOR`, then `vi`.
+
+- **vi / vim / nvim**: swap, backup, undo and viminfo/shada files are
+  switched off automatically.
+- **nano**: fine with its defaults (backups only with `-B` or `set backup`
+  in a nanorc).
+- **GUI editors** need a flag to wait until you close the file, e.g.
+  `EDITOR="code --wait"` or `EDITOR="subl -w"`. **VS Code keeps copies of
+  edited files in its Local History** (`~/.config/Code/User/History`, on
+  disk): disable `workbench.localHistory.enabled` or use a terminal
+  editor.
+- Any other editor: make sure it doesn't write backup, autosave or
+  history copies outside the file's own directory.
+
+#### Sync rules
+
+- `push` only sends keys you changed since the last sync. It refuses if
+  one of them also changed on the server in the meantime, or if a key you
+  added already exists there — `--force` overwrites the server, `pull
+  --force` discards your edits instead.
+- New keys are always stored E2E encrypted with the profile's secret.
+  Existing keys keep their mode: a key that is plaintext on the server
+  stays plaintext when you change it.
+- `pull` never overwrites unpushed edits without `--force`.
+- If a push fails half-way, what was applied is recorded, so the next
+  `diff`/`push` continues from there.
+
+#### New profiles and provisioning hosts
+
+```console
+$ kilovault profiles new -u carol
+✓ Generated and stored an E2E secret for carol
+$ kilovault profiles edit -u carol
+```
+
+A host that fetches carol's keys (see "Automatic Boot Sync via systemd")
+needs that secret in its own config: `kilovault credentials show-secret
+-u carol` prints it (pipe it into your provisioning rather than showing
+it on screen). Note that the host's `config set secret <value>` takes the
+value as an argument, as before.
+
+#### Credentials
+
+| Command | What it does |
+|---|---|
+| `credentials list` | Endpoint, admin token (user, expiry), profiles with a secret, session, last backup. Never prints secrets. |
+| `credentials set-token [--skip-verify]` | Replace the admin token. |
+| `credentials set-secret -u user [--generate] [--skip-verify]` | Store or replace a profile's E2E secret. |
+| `credentials remove-secret -u user` | Forget a profile's secret. |
+| `credentials show-secret -u user` | Print a profile's secret to stdout. |
+| `credentials passwd` | Change the master password (ends the unlock session). |
+| `credentials backup -o file` | Backup protected by a separate recovery passphrase. Never overwrites. |
+| `credentials restore -i file` | Recreate `credentials.enc` from a backup with a new master password. |
+
+**Scripts.** Values are read from hidden prompts on a terminal. When stdin
+is not a terminal, each prompt reads one line from stdin instead, in the
+order the prompts appear. The master password can come from
+`KILOVAULT_MASTER_PASSWORD` (an env var, so it never appears in argv or
+shell history) — e.g.
+`KILOVAULT_MASTER_PASSWORD=… kilovault credentials set-token < token.txt`.
+
+#### How it's protected
+
+| File | Contains | Protection |
+|---|---|---|
+| `~/.config/kilovault/credentials.enc` | admin token, one E2E secret per profile, a random data key | master password |
+| `~/.config/kilovault/profiles/<user>.json.enc` | the profile's values, unpushed edits, sync state | data key from `credentials.enc` |
+| `~/.config/kilovault/config.json` | endpoint (plus whatever the single commands use) | — |
+
+- The master password goes through **argon2id** (64 MiB, 3 passes); keys
+  for each purpose are derived separately (HKDF). Files are sealed with
+  **AES-256-GCM** and bound to what they are, so a modified, swapped or
+  renamed file is rejected.
+- Profiles are encrypted with the random data key, not the password:
+  `credentials passwd` re-encrypts one file, and a backup restores access
+  to everything.
+- Files are `0600` in `0700` directories, owned by you, not symlinks;
+  otherwise the CLI refuses to use them (like ssh) and tells you the
+  `chmod` to run. Writes are atomic.
+- The CLI disables core dumps and debugger attachment before loading
+  secrets, and wipes decrypted buffers after use (best effort in Go).
+- `unlock` caches only the key for `credentials.enc`, in the **Linux
+  kernel keyring** with a kernel-enforced timeout — never on disk. It
+  ends on timeout, `lock`, `credentials passwd`, or reboot.
+- E2E encryption is unchanged: the server only ever sees ciphertext.
+
+**Limits** — what this does not protect against:
+
+- Malware or root on your machine while unlocked: any process running as
+  your user can read the cached session key. Keep the timeout short and
+  `lock` when done.
+- Your editor's own copies (see Editors above).
+- Swap: RAM holding plaintext can be swapped out. Use encrypted swap
+  (Fedora's default zram swap is fine).
+
+#### Backup and recovery
+
+```console
+$ kilovault credentials backup -o kilovault-creds.backup     # any time; again after adding secrets
+$ kilovault credentials restore -i kilovault-creds.backup    # on a new machine or after losing the file
+Recovery passphrase: ••••••
+✓ Backup opened
+New master password: ••••••
+$ kilovault profiles pull                                     # profile files are re-created from the vault
+```
+
+A backup is a snapshot: secrets added later aren't in it, so make a new
+one after `profiles new` or `credentials set-secret`. A forgotten
+master password is recovered the same way (move `credentials.enc` aside,
+then `restore`).
+
+#### Troubleshooting
+
+- **`… has permissions 0644, which allow access by other users`** — run
+  the `chmod` from the message, if nobody else should have had access.
+- **`the kernel keyring is not available here`** — e.g. inside a
+  container with a seccomp filter. Everything still works; commands ask
+  for the master password each time.
+- **`XDG_RUNTIME_DIR is not set` / `is not RAM-backed`** — `edit` needs a
+  normal login session (or `XDG_RUNTIME_DIR` pointing at a tmpfs
+  directory you own). `pull`/`diff`/`push` don't need it.
+- **`<user>: skipped — has encrypted values but no E2E secret is stored`**
+  — run `kilovault credentials set-secret -u <user>`.
+- **`decryption failed: wrong master password, or the file was modified
+  or corrupted`** — deliberately the same message for both cases.
 
 ### System Status
 
