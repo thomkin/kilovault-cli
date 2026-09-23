@@ -12,6 +12,7 @@ import (
 	"github.com/thomkin/kilovault-cli/pkg/client"
 	"github.com/thomkin/kilovault-cli/pkg/credentials"
 	"github.com/thomkin/kilovault-cli/pkg/securestore"
+	"github.com/thomkin/kilovault-cli/pkg/session"
 	"github.com/urfave/cli/v2"
 )
 
@@ -117,7 +118,8 @@ func resolvedEndpoint(c *cli.Context) string {
 	return credentials.NormalizeEndpoint(client.New(getEndpoint(c)).BaseURL())
 }
 
-// openStore asks for the master password and unlocks the store.
+// openStore unlocks the store: from the `kilovault unlock` session if
+// one is active, otherwise by asking for the master password.
 func openStore(p *prompter) (*credentials.Store, error) {
 	path, err := credentialsPath()
 	if err != nil {
@@ -126,7 +128,31 @@ func openStore(p *prompter) (*credentials.Store, error) {
 	if !credentials.Exists(path) {
 		return nil, credentials.ErrNotInitialized
 	}
+	if store, err := storeFromSession(path); store != nil || err != nil {
+		return store, err
+	}
 	return unlockWithPassword(p, path)
+}
+
+// storeFromSession opens the store with the cached session key. It
+// returns (nil, nil) when there's no usable session, dropping one whose
+// key no longer opens the store (e.g. after `credentials passwd`).
+func storeFromSession(path string) (*credentials.Store, error) {
+	id, err := session.ID(path)
+	if err != nil {
+		return nil, nil
+	}
+	sess, err := session.Load(id)
+	if err != nil || sess == nil {
+		return nil, nil // no keyring here, or not unlocked: fall back to the password
+	}
+	store, err := credentials.UnlockWithKey(path, sess.Key)
+	securestore.Wipe(sess.Key)
+	if errors.Is(err, securestore.ErrDecrypt) {
+		session.Clear(id)
+		return nil, nil
+	}
+	return store, err
 }
 
 // unlockWithPassword asks for the master password and unlocks the
@@ -258,6 +284,7 @@ func runCredentialsList(c *cli.Context) error {
 		}
 	}
 
+	fmt.Printf("Session: %s\n", describeSession(store.Path()))
 	if store.Payload.BackupAt != "" {
 		fmt.Printf("Last backup: %s\n", store.Payload.BackupAt)
 	} else {
@@ -457,6 +484,11 @@ func runCredentialsPasswd(c *cli.Context) error {
 		return err
 	}
 	fmt.Println("✓ Master password changed")
+	if id, err := session.ID(store.Path()); err == nil {
+		if cleared, _ := session.Clear(id); cleared {
+			fmt.Fprintln(os.Stderr, "  The unlock session was ended; run `kilovault unlock` again if needed.")
+		}
+	}
 	if store.Payload.BackupAt != "" {
 		fmt.Fprintln(os.Stderr, "  Existing backups are unaffected: they still open with their own recovery passphrase.")
 	}

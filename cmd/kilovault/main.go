@@ -546,6 +546,8 @@ func main() {
 			},
 			initCommand(),
 			credentialsCommand(),
+			unlockCommand(),
+			lockCommand(),
 			{
 				Name:  "install-service",
 				Usage: "Install and enable the systemd service that runs `fetch` at boot (must be run as root)",
