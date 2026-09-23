@@ -445,6 +445,106 @@ func main() {
 				Action: runFetch,
 			},
 			{
+				Name:  "batch",
+				Usage: "Run many set/attr/delete operations from an encrypted file, keeping secrets off the command line",
+				Subcommands: []*cli.Command{
+					{
+						Name:  "export",
+						Usage: "Back up all vault keys (or one user's) into an encrypted batch file, restorable with `batch run`",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:    "out",
+								Aliases: []string{"o"},
+								Usage:   "Path to write the encrypted backup file to (required)",
+							},
+							&cli.StringFlag{
+								Name:  "batch-secret",
+								Usage: "Secret to encrypt the backup with (or set KILOVAULT_BATCH_SECRET)",
+							},
+							&cli.StringFlag{
+								Name:    "token",
+								Aliases: []string{"t"},
+								Usage:   "Admin token",
+							},
+							&cli.StringFlag{
+								Name:    "user",
+								Aliases: []string{"u"},
+								Usage:   "Export only this user's keys (optional; default: all users)",
+							},
+						},
+						Action: runBatchExport,
+					},
+					{
+						Name:  "run",
+						Usage: "Decrypt a batch file and execute all its operations against the vault",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:    "file",
+								Aliases: []string{"f"},
+								Usage:   "Encrypted batch file to run (required)",
+							},
+							&cli.StringFlag{
+								Name:  "batch-secret",
+								Usage: "Secret to decrypt the batch file (or set KILOVAULT_BATCH_SECRET)",
+							},
+							&cli.StringFlag{
+								Name:    "token",
+								Aliases: []string{"t"},
+								Usage:   "Auth token (admin token if any op sets/deletes a value for another user)",
+							},
+							&cli.StringFlag{
+								Name:    "secret",
+								Aliases: []string{"s"},
+								Usage:   "Secret for client-side AES-256 encryption of individual values (applies to every op in this run)",
+							},
+						},
+						Action: runBatchRun,
+					},
+					{
+						Name:  "encrypt",
+						Usage: "Encrypt a plaintext JSON batch file for later use with `batch run`",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:    "in",
+								Aliases: []string{"i"},
+								Usage:   "Plaintext JSON batch file to encrypt (required)",
+							},
+							&cli.StringFlag{
+								Name:    "out",
+								Aliases: []string{"o"},
+								Usage:   "Path to write the encrypted batch file to (required)",
+							},
+							&cli.StringFlag{
+								Name:  "batch-secret",
+								Usage: "Secret to encrypt the batch file with (or set KILOVAULT_BATCH_SECRET)",
+							},
+						},
+						Action: runBatchEncrypt,
+					},
+					{
+						Name:  "decrypt",
+						Usage: "Decrypt a batch file for inspection (prints plaintext — for debugging only)",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:    "file",
+								Aliases: []string{"f"},
+								Usage:   "Encrypted batch file to decrypt (required)",
+							},
+							&cli.StringFlag{
+								Name:  "batch-secret",
+								Usage: "Secret to decrypt the batch file (or set KILOVAULT_BATCH_SECRET)",
+							},
+							&cli.StringFlag{
+								Name:    "out",
+								Aliases: []string{"o"},
+								Usage:   "Write decrypted plaintext here (mode 0600) instead of stdout",
+							},
+						},
+						Action: runBatchDecrypt,
+					},
+				},
+			},
+			{
 				Name:  "install-service",
 				Usage: "Install and enable the systemd service that runs `fetch` at boot (must be run as root)",
 				Action: func(c *cli.Context) error {

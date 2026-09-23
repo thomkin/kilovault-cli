@@ -259,6 +259,122 @@ Notes:
 - Removes/sets are flag-based only — there's no `$EDITOR`/interactive mode,
   so decrypted plaintext never touches disk.
 
+### Batch Operations
+
+Run many `set`/`attr`/`delete` operations in one shot from a file instead of
+individual commands — the reason to reach for this is that individual
+`set -v <secret>` invocations put every secret directly on the command
+line, where it lands in shell history and `ps` output. A batch file
+holds all of them instead, encrypted at rest with its own secret kept
+out of both the CLI arguments and the config file.
+
+**1. Write a plaintext batch file** — a JSON array of operations:
+
+```json
+[
+  {"op": "set", "key": "db_password", "value": "hunter2"},
+  {"op": "set", "key": "api_key", "value": "abc123", "user": "svc-user-1"},
+  {"op": "attr", "key": "user1",
+    "set": [{"path": "active", "value": true}, {"path": "profile.name", "value": "Jordan"}],
+    "remove": ["profile.oldField"]},
+  {"op": "delete", "key": "oldkey", "user": "svc-user-1"}
+]
+```
+
+- `"op": "set"` — sets `key` to `value`. `user` is optional: if given,
+  writes via `admin set` for that user (needs an admin token); if
+  omitted, writes via `set` for the caller's own key.
+- `"op": "attr"` — same semantics as the `attr` command (`remove`
+  applied before `set`, in list order). No `user` field — like `attr`,
+  it always operates on the caller's own key. Unlike the `attr`
+  command's `--set path=value` flag, `value` here is already a typed
+  JSON value (no string auto-detection needed).
+- `"op": "delete"` — deletes `key` for `user` (required — there is no
+  non-admin delete command to fall back to).
+
+If any op fails, the batch stops immediately; ops already applied
+before the failure are **not** rolled back.
+
+**2. Encrypt it:**
+
+```bash
+export KILOVAULT_BATCH_SECRET="a-secret-only-for-this-file"
+kilovault batch encrypt -i batch.plain.json -o batch.enc
+# then delete batch.plain.json — it's still plaintext
+```
+
+**3. Run it** (decrypts in memory, executes every op, never writes
+plaintext to disk):
+
+```bash
+kilovault batch run -e https://your-endpoint -f batch.enc -t "$ADMIN_TOKEN"
+
+# -s/--secret still works exactly as elsewhere, for encrypting/decrypting
+# the individual VALUES inside the batch (separate from KILOVAULT_BATCH_SECRET,
+# which only protects the batch file itself):
+kilovault batch run -f batch.enc -t "$ADMIN_TOKEN" -s "$KILOVAULT_SECRET"
+```
+
+`KILOVAULT_BATCH_SECRET` resolves the same way as other secrets (flag
+`--batch-secret` beats the env var), **except** it has no config-file
+fallback — persisting it to `~/.config/kilovault/config.json` would
+defeat the point of keeping it off disk. Set it as an env var
+immediately before running the batch and unset it afterward.
+
+To inspect a batch file's contents for debugging (prints plaintext —
+including secrets — so use with care):
+
+```bash
+kilovault batch decrypt -f batch.enc                  # to stdout
+kilovault batch decrypt -f batch.enc -o batch.plain.json  # to a 0600 file
+```
+
+**On memory handling:** `batch run`/`batch decrypt` decrypt the file
+into a `[]byte` buffer and overwrite it with zeros as soon as it's no
+longer needed, rather than relying on garbage collection alone. This is
+best-effort defense in depth, not a hard guarantee — Go's runtime may
+already have copied fragments of it elsewhere (e.g. `encoding/json`
+allocates a fresh, immutable string per field when parsing the batch),
+and nothing here protects against data swapped to disk or captured in
+a core dump. The reliable guarantee `batch` gives you is the one that
+actually matters day to day: secrets never appear as CLI arguments or
+in shell history.
+
+#### Full-Vault Backup and Restore
+
+`batch export` dumps every key currently in the vault (or one user's,
+with `-u`) straight into a fresh encrypted batch file — an admin-scope
+snapshot you can keep for disaster recovery, move between environments,
+or hand-edit (via `batch decrypt` / `batch encrypt`) before replaying.
+
+```bash
+export KILOVAULT_BATCH_SECRET="a-secret-only-for-this-backup"
+kilovault batch export -e https://your-endpoint -o vault-backup.enc -t "$ADMIN_TOKEN"
+
+# scope to one user instead of the whole vault
+kilovault batch export -o alice-backup.enc -t "$ADMIN_TOKEN" -u alice
+```
+
+Values are captured **exactly as stored on the server** — plaintext or
+already client-side ciphertext, it doesn't matter, since export never
+tries to decrypt them (it doesn't need `-s/--secret` and doesn't ask
+for one). Each generated op is `{"op":"set", ..., "raw":true}`; `raw`
+tells `batch run` to write the value straight through, skipping its
+normal `-s/--secret` encryption pass — otherwise an already-encrypted
+value would get wrapped in a second layer of encryption on restore and
+become undecryptable with either secret. Restoring is just:
+
+```bash
+kilovault batch run -e https://your-new-endpoint -f vault-backup.enc -t "$ADMIN_TOKEN"
+```
+
+Since it's an ordinary batch file, you can also open it with `batch
+decrypt`/`batch encrypt`, hand-edit the JSON (drop a key, change a
+plaintext value, append new `set`/`attr`/`delete` ops of your own — new
+ops you add don't need `"raw":true` unless you want that same
+write-through behavior), and `batch run` the result to apply the edits
+in bulk.
+
 ### System Status
 
 ```bash
