@@ -83,3 +83,43 @@ func TestIsEncrypted(t *testing.T) {
 		}
 	}
 }
+
+func TestDecryptBytes_RoundTrip(t *testing.T) {
+	secret := "correct-secret"
+	plaintext := "hello world"
+
+	encrypted, err := Encrypt(secret, plaintext)
+	if err != nil {
+		t.Fatalf("Encrypt returned error: %v", err)
+	}
+
+	got, err := DecryptBytes(secret, encrypted)
+	if err != nil {
+		t.Fatalf("DecryptBytes returned error: %v", err)
+	}
+	if string(got) != plaintext {
+		t.Errorf("DecryptBytes = %q, want %q", got, plaintext)
+	}
+}
+
+func TestDecryptBytes_WrongSecretErrors(t *testing.T) {
+	encrypted, err := Encrypt("right-secret", "sensitive-value")
+	if err != nil {
+		t.Fatalf("Encrypt returned error: %v", err)
+	}
+
+	_, err = DecryptBytes("wrong-secret", encrypted)
+	if err == nil {
+		t.Fatalf("expected error decrypting with wrong secret, got none")
+	}
+}
+
+func TestZeroBytes(t *testing.T) {
+	b := []byte("sensitive-data")
+	ZeroBytes(b)
+	for i, v := range b {
+		if v != 0 {
+			t.Fatalf("b[%d] = %d, want 0 after ZeroBytes", i, v)
+		}
+	}
+}
