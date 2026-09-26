@@ -111,6 +111,19 @@ func TestProfiles_PullStoresEncryptedFiles(t *testing.T) {
 	if !strings.Contains(stdout, "No unpushed changes") {
 		t.Errorf("diff right after pull:\n%s", stdout)
 	}
+
+	stdout, _, err = runCLIHome(t, home, env, "", "profiles", "list", "--keys", "-u", "alice")
+	if err != nil || !strings.Contains(stdout, "alice:\n  DB_PASSWORD\n  GRAFANA\n") || strings.Contains(stdout, "bob") {
+		t.Errorf("list --keys -u alice = %q, %v", stdout, err)
+	}
+	for _, leak := range []string{"hunter2", "https://g"} {
+		if strings.Contains(stdout, leak) {
+			t.Errorf("list --keys leaks value %q", leak)
+		}
+	}
+	if _, _, err := runCLIHome(t, home, env, "", "profiles", "list", "-u", "carol"); err == nil {
+		t.Error("list -u for a missing profile succeeded")
+	}
 }
 
 func TestProfiles_PullSkipsProfileWithoutSecret(t *testing.T) {

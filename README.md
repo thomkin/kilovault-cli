@@ -455,7 +455,7 @@ $ kilovault lock                      # optional; the session also just expires
 | `profiles diff [-u user] [--show-values]` | Unpushed edits. Values are hidden unless `--show-values`. Works offline. |
 | `profiles push [-u user] [-y] [--force] [--show-values]` | Write unpushed edits to the vault after confirmation. |
 | `profiles new -u user` | Empty profile for a user with no keys yet, with a generated E2E secret. |
-| `profiles list` | Overview of the local profiles. |
+| `profiles list [-u user] [-k]` | Overview of the local profiles. `-k/--keys` also lists key names (never values). |
 
 All `profiles` commands take `-d/--dir` (or `KILOVAULT_PROFILES_DIR`) to
 use another directory than `~/.config/kilovault/profiles`.

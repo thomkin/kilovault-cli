@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"text/tabwriter"
@@ -51,9 +52,12 @@ func profilesCommand() *cli.Command {
 		Usage: "Administer every vault user's keys as encrypted local profiles (needs `kilovault init`)",
 		Subcommands: []*cli.Command{
 			{
-				Name:   "list",
-				Usage:  "Show local profiles, unpushed changes and which have an E2E secret",
-				Flags:  []cli.Flag{profilesDirFlag},
+				Name:  "list",
+				Usage: "Show local profiles, unpushed changes and which have an E2E secret",
+				Flags: []cli.Flag{
+					profilesDirFlag, profilesUserFlag,
+					&cli.BoolFlag{Name: "keys", Aliases: []string{"k"}, Usage: "Also list each profile's key names (never values)"},
+				},
 				Action: runProfilesList,
 			},
 			{
@@ -202,18 +206,26 @@ func runProfilesList(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	if only := c.String("user"); only != "" {
+		if !slices.Contains(users, only) {
+			return fmt.Errorf("no local profile %q — run `kilovault profiles pull -u %s`", only, only)
+		}
+		users = []string{only}
+	}
 	if len(users) == 0 {
 		fmt.Printf("No profiles in %s\n", e.dir)
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "PROFILE\tKEYS\tUNPUSHED\tE2E SECRET\tLAST SYNC")
+	var loaded []*profiles.Profile
 	for _, user := range users {
 		prof, err := e.load(user)
 		if err != nil {
 			fmt.Fprintf(w, "%s\t?\t?\t?\terror: %v\n", user, err)
 			continue
 		}
+		loaded = append(loaded, prof)
 		secret := "missing"
 		if e.store.Secret(e.endpoint, user) != "" {
 			secret = "stored"
@@ -224,7 +236,23 @@ func runProfilesList(c *cli.Context) error {
 		}
 		fmt.Fprintf(w, "%s\t%d\t%d\t%s\t%s\n", user, len(prof.Values), len(prof.Changes()), secret, synced)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	if c.Bool("keys") {
+		for _, prof := range loaded {
+			keys := make([]string, 0, len(prof.Values))
+			for key := range prof.Values {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			fmt.Printf("\n%s:\n", prof.User)
+			for _, key := range keys {
+				fmt.Printf("  %s\n", key)
+			}
+		}
+	}
+	return nil
 }
 
 // ---- pull ----
