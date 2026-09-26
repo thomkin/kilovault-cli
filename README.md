@@ -611,6 +611,31 @@ one after `profiles new` or `credentials set-secret`. A forgotten
 master password is recovered the same way (move `credentials.enc` aside,
 then `restore`).
 
+#### Setting up a new machine
+
+The vault server only has ciphertext; the admin token and every
+profile's E2E secret live in `credentials.enc`. A fresh admin token
+alone can't decrypt the profiles, so bring a backup over instead of
+running `init`. No new token is needed: the backup contains it.
+
+```console
+# on the existing machine
+$ kilovault credentials backup -o kilovault-creds.backup
+
+# copy kilovault-creds.backup to the new machine (USB, scp), then there:
+$ kilovault credentials restore -i kilovault-creds.backup
+$ kilovault config set endpoint https://vault.example.com
+$ kilovault credentials list          # should show "Admin token: set" and the profiles
+$ kilovault unlock
+$ kilovault profiles pull
+$ shred -u kilovault-creds.backup     # unless this copy is your offline backup
+```
+
+- The endpoint must be the same one the token was stored under (see
+  `credentials list` on the old machine); `restore` doesn't set it.
+- Unpushed edits exist only on the machine they were made on: run
+  `profiles push` on the old machine first, or they won't be pulled.
+
 #### Troubleshooting
 
 - **`… has permissions 0644, which allow access by other users`** — run
