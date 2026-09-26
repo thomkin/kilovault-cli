@@ -102,6 +102,9 @@ func ParseDoc(data []byte) (map[string]string, error) {
 
 	values := map[string]string{}
 	for dec.More() {
+		if comma, ok := trailingComma(data, dec.InputOffset()); ok {
+			return nil, withLine(data, comma, errors.New("trailing comma before }"))
+		}
 		tok, err := dec.Token()
 		if err != nil {
 			return nil, syntaxErr(data, err)
@@ -161,6 +164,25 @@ func syntaxErr(data []byte, err error) error {
 		return withLine(data, int64(len(data)), errors.New("unexpected end of document (missing } or \"?)"))
 	}
 	return err
+}
+
+// trailingComma reports the offset of a ',' at offset that is followed
+// only by whitespace and '}'. encoding/json's error for this points at
+// the comma or the brace depending on the Go version, so it is detected
+// here to give the same line everywhere.
+func trailingComma(data []byte, offset int64) (int64, bool) {
+	isSpace := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+	i := offset
+	for i < int64(len(data)) && isSpace(data[i]) {
+		i++
+	}
+	if i >= int64(len(data)) || data[i] != ',' {
+		return 0, false
+	}
+	comma := i
+	for i++; i < int64(len(data)) && isSpace(data[i]); i++ {
+	}
+	return comma, i < int64(len(data)) && data[i] == '}'
 }
 
 func withLine(data []byte, offset int64, err error) error {

@@ -58,7 +58,7 @@ func TestParseDoc_Errors(t *testing.T) {
 	cases := map[string]struct{ doc, want string }{
 		"duplicate key":   {"{\n  \"A\": \"1\",\n  \"A\": \"2\"\n}", `line 3: duplicate key "A"`},
 		"missing comma":   {"{\n  \"A\": \"1\"\n  \"B\": \"2\"\n}", "line 3"},
-		"trailing comma":  {"{\n  \"A\": \"1\",\n}", "line 3"},
+		"trailing comma":  {"{\n  \"A\": \"1\",\n}", "line 2: trailing comma"},
 		"empty value":     {`{"A": ""}`, "empty value"},
 		"empty key":       {`{"": "x"}`, "empty key"},
 		"not an object":   {`["A"]`, "must be a JSON object"},
